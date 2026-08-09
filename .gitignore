@@ -8,3 +8,7 @@ out/
 # them are regenerated, so they are ignored here too. See docs/Pegasus_Format.md.
 *.pegasus
 workspace/
+
+# The folder feed NuGet.config points at. The packages in it are built from
+# EmuSen-Project and are not this repository's to carry.
+local-packages/*.nupkg

@@ -1,4 +1,4 @@
-namespace Pegasus.Net
+namespace EmuSen.Pegasus
 
 open System
 open System.Buffers.Binary
@@ -6,10 +6,10 @@ open System.IO
 open System.Net
 open System.Net.Sockets
 open System.Threading
-open Pegasus.Core
+open EmuSen.Pegasus
 
 /// Length-prefixed sealed frames over a stream. Wire layout in
-/// docs/Pegasus_Sync.md §3.
+/// Pegasus_Sync.md §3.
 module Framing =
 
     let private readExactly (stream: Stream) (count: int) (ct: CancellationToken) =
@@ -89,7 +89,7 @@ module Handshake =
         }
 
 /// One connected peer. Both host and joiner drive this identically, which is
-/// what keeps a future relay from needing a third role -- docs/Pegasus_Sync.md §1.
+/// what keeps a future relay from needing a third role -- Pegasus_Sync.md §1.
 type Session(stream: Stream, key: byte[], self: PeerInfo, document: DocumentActor) =
     let cts = new CancellationTokenSource()
     let peerJoined = Event<PeerInfo>()

@@ -3,6 +3,9 @@
 One note is one `.pegasus` file. The file is the authoritative replica of that
 note on this machine; the `.md` beside it is a projection and is never read back.
 
+The design argument that selects this format is in `Pegasus_Design.md` §2 and
+§4.1; what follows is the format itself and what it guarantees.
+
 ## 1. Layout
 
     header   32 bytes
@@ -53,6 +56,11 @@ orphaned, and an orphan is harmless.
 
 Compaction is not a checkpoint that can be lost. It is a rewrite of information
 already durably present.
+
+Note that the atomicity argument is a Linux one. `File.Move(..., overwrite: true)`
+is the same call on the other two RIDs this project publishes for, but the
+guarantee it carries there has not been verified, and this section should not be
+read as claiming it has.
 
 ## 4. What `Append` guarantees, and what it does not
 

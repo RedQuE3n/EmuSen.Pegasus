@@ -1,11 +1,11 @@
-module Pegasus.Tests.NetTests
+module EmuSen.Pegasus.Tests.NetTests
 
 open System
 open System.Threading
 open System.Threading.Tasks
 open Xunit
-open Pegasus.Core
-open Pegasus.Net
+open EmuSen.Pegasus
+open EmuSen.Pegasus
 
 let private peer name colour =
     { Id = PeerId.New()
@@ -23,7 +23,7 @@ let private waitFor (timeoutMs: int) (condition: unit -> bool) =
     condition ()
 
 /// Brings up a host and a joiner on loopback, both pumping. No window, no
-/// second process -- the discipline described in docs/Pegasus_Design.md §5.
+/// second process -- the discipline described in Pegasus_Design.md §5.
 type private Pair() =
     let code = Crypto.newJoinCode ()
     let alice = new DocumentActor()

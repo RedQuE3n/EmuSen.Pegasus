@@ -1,10 +1,8 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/Pegasus.App/Pegasus.App.fsproj" />
-    <Project Path="src/Pegasus.Core/Pegasus.Core.fsproj" />
-    <Project Path="src/Pegasus.Net/Pegasus.Net.fsproj" />
+    <Project Path="src/EmuSen.Pegasus/EmuSen.Pegasus.fsproj" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="tests/Pegasus.Tests/Pegasus.Tests.fsproj" />
+    <Project Path="tests/EmuSen.Pegasus.Tests/EmuSen.Pegasus.Tests.fsproj" />
   </Folder>
 </Solution>

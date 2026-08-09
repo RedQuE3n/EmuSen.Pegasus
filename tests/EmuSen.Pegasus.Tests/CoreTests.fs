@@ -1,11 +1,11 @@
-module Pegasus.Tests.CoreTests
+module EmuSen.Pegasus.Tests.CoreTests
 
 open System
 open System.IO
 open Xunit
 open FsCheck
 open FsCheck.Xunit
-open Pegasus.Core
+open EmuSen.Pegasus
 
 // ---------------------------------------------------------------------------
 // Codec
@@ -345,7 +345,7 @@ let ``the markdown projection is written beside the note`` () =
 
 // ---------------------------------------------------------------------------
 // Client ids. YDotNet's default Doc() draws from roughly 6 bits; two replicas
-// sharing one lose each other's edits silently. docs/Pegasus_Design.md §4.5.
+// sharing one lose each other's edits silently. Pegasus_Design.md §4.5.
 // ---------------------------------------------------------------------------
 
 [<Fact>]
@@ -361,7 +361,7 @@ let ``a client id is never zero and stays under the 2 to the 32 ceiling`` () =
 
 [<Fact>]
 let ``delta sync stays exact below the ceiling and breaks at it`` () =
-    // Pins the YDotNet 0.6.0 boundary from docs/Pegasus_Design.md §4.7. If the
+    // Pins the YDotNet 0.6.0 boundary from Pegasus_Design.md §4.7. If the
     // second half starts passing, the library was fixed and the cap can lift.
     let roundTrip (idA: uint64) (idB: uint64) =
         use a = new DocumentActor(clientId = idA)
@@ -428,3 +428,33 @@ let ``an unchanged buffer never moves the caret`` () =
 let ``an adjusted caret always lands inside the new buffer`` (before: NonNull<string>) (after: NonNull<string>) (NonNegativeInt caret) =
     let result = Caret.adjust before.Get after.Get caret
     result >= 0 && result <= after.Get.Length
+
+// ---------------------------------------------------------------------------
+// Agnosticism. Pegasus is a notepad on a windowing toolkit, not a part of the
+// emulator, and LunaP is intended to be published on its own. Both claims are
+// only true while this holds. See Pegasus_Design.md §11.
+// ---------------------------------------------------------------------------
+
+[<Fact>]
+let ``Pegasus references the toolkit and nothing else of EmuSen`` () =
+    let allowed = set [ "EmuSen.LunaP" ]
+
+    let referenced =
+        typeof<DocumentActor>.Assembly.GetReferencedAssemblies()
+        |> Array.map _.Name
+        |> Array.filter (fun n -> n.StartsWith("EmuSen.", StringComparison.Ordinal))
+        |> Array.filter (fun n -> not (allowed.Contains n))
+        |> Array.distinct
+
+    Assert.True(
+        referenced.Length = 0,
+        $"""Pegasus reaches past the toolkit into: {String.Join(", ", referenced)}"""
+    )
+
+[<Fact>]
+let ``the workspace path is not hardcoded to one platform`` () =
+    // ".local/share" is Linux-only and was wrong on the macOS and Windows RIDs
+    // this project publishes for.
+    let root = Controller.defaultWorkspaceRoot
+    Assert.False(String.IsNullOrWhiteSpace root)
+    Assert.True(Path.IsPathRooted root)

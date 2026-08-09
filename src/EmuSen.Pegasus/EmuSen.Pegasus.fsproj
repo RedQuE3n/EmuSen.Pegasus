@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Pegasus: a live shared notepad two people type into at once. Named for
+       Helios/Pegasus in the EmuSen naming scheme, which is where it was built
+       before moving here. See docs/Pegasus_Design.md for the design record,
+       docs/Pegasus_Format.md for the on-disk format, and docs/Pegasus_Sync.md
+       for pairing and the wire protocol.
+
+       ONE ASSEMBLY ON PURPOSE. It arrived as four projects - core, net, app and
+       tests - and was collapsed. A project boundary has to buy somebody
+       separability they are actually using, and nothing outside Pegasus
+       consumes its document model or its transport. See docs/Pegasus_Design.md §7. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>EmuSen.Pegasus</AssemblyName>
+    <RootNamespace>EmuSen.Pegasus</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Types.fs" />
+    <Compile Include="Codec.fs" />
+    <Compile Include="Crypto.fs" />
+    <Compile Include="Document.fs" />
+    <Compile Include="Store.fs" />
+    <Compile Include="Workspace.fs" />
+    <Compile Include="Session.fs" />
+    <Compile Include="Controller.fs" />
+    <Compile Include="Shell.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Yrs, the Rust Yjs, through its .NET binding. The natives for all three
+         desktop platforms ship so a publish for any RID carries libyrs. -->
+    <PackageReference Include="YDotNet" Version="0.6.0" />
+    <PackageReference Include="YDotNet.Native.Linux" Version="0.6.0" />
+    <PackageReference Include="YDotNet.Native.MacOS" Version="0.6.0" />
+    <PackageReference Include="YDotNet.Native.Win32" Version="0.6.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The window, the theme and the bootstrap all come from LunaP, which is
+         why Avalonia is not named here - docs/Pegasus_Design.md §8. It is a
+         package rather than a ProjectReference because it lives in another
+         repository; NuGet.config says where it is found - §7.1. -->
+    <PackageReference Include="EmuSen.LunaP" Version="0.1.0" />
+  </ItemGroup>
+
+</Project>

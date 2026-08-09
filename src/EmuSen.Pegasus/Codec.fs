@@ -1,10 +1,10 @@
-namespace Pegasus.Core
+namespace EmuSen.Pegasus
 
 open System
 open System.IO
 open System.Text
 
-/// Frame <-> bytes. Format and tag assignments are in docs/Pegasus_Sync.md §3.
+/// Frame <-> bytes. Format and tag assignments are in Pegasus_Sync.md §3.
 module Codec =
 
     [<Literal>]
@@ -26,12 +26,12 @@ module Codec =
     let private TagBye = 5uy
 
     /// Frames are bounded so a malformed or hostile length cannot make us
-    /// allocate arbitrarily; see docs/Pegasus_Sync.md §5.
+    /// allocate arbitrarily; see Pegasus_Sync.md §5.
     [<Literal>]
     let MaxFrameBytes = 64 * 1024 * 1024
 
     // Binary rather than JSON: System.Text.Json cannot serialise F# unions and
-    // PeerId is one. See docs/Pegasus_Design.md §4.6.
+    // PeerId is one. See Pegasus_Design.md §4.6.
     let private writeWith (tag: byte) (write: BinaryWriter -> unit) =
         use ms = new MemoryStream()
         use w = new BinaryWriter(ms, UTF8Encoding false, true)

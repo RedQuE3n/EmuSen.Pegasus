@@ -1,8 +1,15 @@
 # Pegasus — design record
 
-This file records decisions, the evidence behind them, and predictions that were
-retired. Code comments in this repository stay to one line and point here; the
-argument lives in prose, not in the source.
+Pegasus is a live shared notepad: two people type into the same document at once,
+from different machines, and neither can lose work.
+
+It was built inside the EmuSen emulator project, where it was the only F#, and
+moved to its own repository once it stopped needing anything of EmuSen but the
+windowing toolkit. §7.1 records how that dependency is carried across the
+repository boundary, and §11.2 records the test that keeps the claim honest.
+
+The on-disk format is in `Pegasus_Format.md`; pairing and the wire protocol are in
+`Pegasus_Sync.md`. Code comments point here rather than explaining themselves.
 
 ## 1. What Pegasus is for
 
@@ -58,6 +65,10 @@ What F# is expected to earn, recorded so it can be checked rather than assumed:
 
 If these do not materialise in practice, that is a finding to write down here,
 not to paper over.
+
+Note that this argument does not generalise back to EmuSen. It is an argument
+about a leaf with no C# callers, and the move to a separate repository has made
+the leaf condition structural rather than a promise.
 
 ## 4. Phase 0 — dependency spike, run 2026-08-09
 
@@ -128,7 +139,7 @@ claim: the *payloads* Pegasus carries are ordinary Yjs updates and state vectors
 so a bridge to a `y-websocket` client remains a translation shim at the frame
 boundary rather than a change to the document model.
 
-### 4.4 Avalonia.FuncUI 2.0.0 — PASSED
+### 4.4 Avalonia.FuncUI 2.0.0 — PASSED, and later dropped anyway
 
 FuncUI 2.0.0 shipped 2026-07-28 and was twelve days old when adopted, which was
 the largest scheduled risk in the plan. It restores against Avalonia 12.1.0, and
@@ -140,13 +151,17 @@ More usefully, it renders under `Avalonia.Headless`: the spike showed a
 the sibling `TextBlock` update through component state. Pegasus can therefore
 test its UI without putting a window on anyone's screen.
 
-One mechanism note for the test suite: **FuncUI builds no XAML name scope**, so
-`FindControl<T>(name)` throws `"Could not find parent name scope."` Tests reach
-controls through `GetLogicalDescendants()` instead.
+One mechanism note, kept because it cost time: **FuncUI builds no XAML name
+scope**, so `FindControl<T>(name)` throws `"Could not find parent name scope."`
+Tests reach controls through `GetLogicalDescendants()` instead — which is still
+how they work, for a different reason, now that FuncUI is gone.
 
 The plain-Avalonia fallback specified in the plan was not needed and is retired.
+The spike's verdict on FuncUI stands and is not the reason it was later dropped;
+§8 records that decision, which was about idiom count rather than about anything
+FuncUI failed to do.
 
-## 4.5 A defect found by the property test: colliding client ids
+### 4.5 A defect found by the property test: colliding client ids
 
 Yjs identifies every operation by `(clientId, clock)`. Two replicas sharing a
 clientId therefore mint colliding operation identities, and the merge silently
@@ -169,7 +184,7 @@ to share id 4242, each given a different edit, and synced in both directions:
 
 Each side kept only its own edit. No error was raised. `DocumentActor` therefore
 always sets an explicit id, and three tests pin the behaviour, including one that
-asserts the shared-id case still *diverges* -- if that test ever starts passing,
+asserts the shared-id case still *diverges* — if that test ever starts passing,
 YDotNet changed and this section needs revisiting.
 
 How it was found is worth recording: the hand-written convergence tests all
@@ -177,23 +192,23 @@ passed. The FsCheck property test failed intermittently, roughly one run in
 twenty-five, which is what a one-in-sixteen collision looks like through a filter
 of small cases. A hand-written suite would not have caught this.
 
-## 4.6 System.Text.Json cannot serialise F# unions
+### 4.6 System.Text.Json cannot serialise F# unions
 
 `PeerId` and `NoteId` are single-case unions, and `JsonSerializer` throws
 `NotSupportedException` on any F# union. Flat DTO records were tried first and
 failed too: records nested in a module are not constructible by the deserialiser,
 and `[<CLIMutable>]` did not rescue them.
 
-The wire format is therefore binary -- a tag byte followed by
+The wire format is therefore binary — a tag byte followed by
 `BinaryWriter`-framed fields. This is smaller than JSON, has no dependency on a
 serialiser's opinion of F#, and keeps the format entirely under our control. The
 cost is that the frame layout is now something a human cannot read off the wire,
 which is what `Pegasus_Sync.md` §3 exists to compensate for.
 
-## 4.7 A second defect: client ids at or above 2^32 break delta sync
+### 4.7 A second defect: client ids at or above 2^32 break delta sync
 
-Fixing §4.5 by drawing ids uniformly below 2^53 -- the documented Yjs ceiling, so
-a JavaScript peer can hold one exactly -- broke convergence *worse*, and in a way
+Fixing §4.5 by drawing ids uniformly below 2^53 — the documented Yjs ceiling, so
+a JavaScript peer can hold one exactly — broke convergence *worse*, and in a way
 that initially looked like a bug in our own mailbox.
 
 It is not. With a client id at or above 2^32, `Transaction.StateDiffV1` ignores
@@ -214,7 +229,7 @@ The boundary was bisected and is exact:
     2^32 and above            DIVERGED
 
 This is a 32-bit truncation somewhere in the binding's state-vector path.
-`ClientId.ExclusiveMax` is therefore 2^32, giving 32 bits of entropy -- ample
+`ClientId.ExclusiveMax` is therefore 2^32, giving 32 bits of entropy — ample
 against collision for a handful of peers, and far above the six bits the default
 constructor supplies.
 
@@ -234,3 +249,260 @@ retried:
 The isolating step that mattered was reproducing the divergence with no
 `MailboxProcessor` involved at all. Until that ran, the actor was the prime
 suspect and the library was assumed correct.
+
+---
+
+## 5. Testing discipline
+
+Everything is headless, including the UI. `Avalonia.Headless` renders a real
+control tree without a display, so the window under test is the window that
+ships — no window is ever opened on anyone's screen. This is the rule EmuSen
+holds for its emulator cores, carried over deliberately.
+
+The property test earned its place immediately. Both defects in §4.5 and §4.7
+were found by randomised interleavings, not by the hand-written cases, which all
+passed. §4.5's collision rate of roughly one in sixteen is exactly what an
+intermittent property failure looks like through a filter of small examples.
+
+`Caret.adjust` is a pure function for the same reason: the rule for where a
+caret belongs after the buffer changed underneath it is arithmetic, and
+arithmetic should not need a window to test.
+
+§11.1 is the counter-example that keeps this section from being self-
+congratulatory: a green headless suite proved the control tree and said nothing
+at all about whether anything was drawn.
+
+---
+
+## 6. The note format
+
+Moved to `Pegasus_Format.md`, which holds the layout, the recovery argument, and
+an exact statement of what durability is and is not promised. This section number
+is kept so the numbering above and below it does not shift.
+
+---
+
+## 7. Why this is one assembly
+
+Pegasus arrived as four projects — core, transport, application and tests — and
+was collapsed to two.
+
+A project boundary has to buy somebody separability they are actually using.
+Nothing outside Pegasus consumes its document model or its transport, and no
+second frontend is planned over either. Four assemblies bought layering that only
+Pegasus itself observed, and the layering survives as file order inside one
+project: `Types` before `Codec` before `Crypto` before `Document` before `Store`
+before `Workspace` before `Session` before the UI. F#'s compilation order makes
+that ordering a compiler-enforced fact rather than a convention, which is most of
+what the separate projects were providing.
+
+This is the same reasoning that retired `EmuSen.Crystal` and `EmuSen.Nehellania`
+on 2026-08-05, applied before the boundary was paid for rather than after.
+
+`FSharp.Core` is no longer an argument that has to be won. It was the objection
+that sank EmuSen's `F#ascent` branch, and the move to a separate repository
+settles it structurally: no EmuSen frontend and no core can link this executable,
+because it is not in that solution any more.
+
+### 7.1 Why the toolkit arrives as a package
+
+Pegasus needs `EmuSen.LunaP` (§8) and LunaP must stay in EmuSen, where three
+other projects consume it. Four ways to cross that boundary were considered:
+
+- **Vendor a slice of LunaP into this repository.** Pegasus uses a small surface —
+  `LunaApp.Configure`, `ToolWindow`, five `Ui.*` helpers and the theme — so this
+  was cheap. Rejected because a vendored copy forks: the corrections that make
+  LunaP worth depending on (§8) would stop arriving, and the whole argument for
+  using a shared toolkit is that it accumulates them.
+- **Git submodule of EmuSen-Project.** Rejected: it makes building a notepad
+  require checking out an emulator, which gives up most of what the split was for.
+- **Drop LunaP and use raw Avalonia.** Rejected on evidence rather than taste —
+  §8 records that the hand-rolled bootstrap this would return to is exactly what
+  silently dropped `UseX11` on Wayland.
+- **Publish LunaP as a NuGet package.** Adopted.
+
+`EmuSen.LunaP` is packed at 0.1.0 together with the two dependency-free leaves it
+names, `EmuSen.Galaxia` and `EmuSen.Cauldron`, because a consumer outside that
+repository cannot resolve a `ProjectReference`.
+
+This does not weaken LunaP's layering rule; it enforces it. That rule says LunaP
+may reference Avalonia, Galaxia and Cauldron and nothing else, and its purpose is
+to stop a launcher acquiring an entire emulator by accident. A package cannot
+reach back up into a core at all, so the constraint that was a comment in a
+`.csproj` is now a property of the artifact.
+
+Two limitations, stated rather than discovered later:
+
+- The package feed is currently a folder, `local-packages/`, that `NuGet.config`
+  resolves relative to itself. It is populated by `dotnet pack` in EmuSen-Project.
+  GitHub Packages is the intended destination and the reason this is a folder
+  today is only that the packages have not been pushed there yet.
+- `EmuSen.Galaxia` ships its catalogue schema as `.sql` files copied to the build
+  output. Those do **not** travel in the package, because they are `None` items
+  rather than packaged content. Pegasus does not use the catalogue, so this costs
+  nothing here; anyone packaging Galaxia for a consumer that *does* want the
+  catalogue has to fix it first.
+
+A licence consequence follows and is worth naming: EmuSen is GPL-3.0, so the
+packages are GPL-3.0, so Pegasus is a derivative work of them. This repository's
+licence is therefore not a free choice while §8 holds.
+
+---
+
+## 8. Built on LunaP
+
+The window is a `LunaP.Windowing.ToolWindow`, the layout comes from
+`LunaP.Fluent.Ui`, and the process starts through `LunaApp.Configure`. Pegasus
+therefore inherits the shared theme, remembered window geometry, and the
+bootstrap sequence.
+
+That last one is not cosmetic. `LunaApp.Configure` ends with `UseX11()` on Linux
+because **`UsePlatformDetect` does not pick X11 on a Wayland session**. Pegasus
+was first written outside EmuSen with a hand-rolled
+`UsePlatformDetect().WithInterFont().LogToTrace()`, which reproduced three
+quarters of `LunaApp` and silently dropped the part that matters on the machine
+it was being written on. A shared toolkit earns its keep exactly here: not in the
+controls it supplies, but in the corrections already encoded in it.
+
+That history is also the reason §7.1 rejects vendoring. Pegasus has now been
+outside EmuSen twice; the first time it reproduced this bug, and a fork of LunaP
+is the arrangement that would let it happen again.
+
+The first draft also used `Avalonia.FuncUI`, a declarative F# layer over
+Avalonia. It was dropped in the move into EmuSen. FuncUI is pleasant and it
+worked (§4.4), but a second UI idiom inside a repository that already had one is
+a cost paid by every future reader, and nothing in a notepad needed what it added
+over `Ui.Row` and `Ui.Dock`.
+
+The premise of that decision has now partly expired — this repository has no
+other UI idiom to be consistent with. The decision stands anyway, on the
+remaining half of the argument: `Ui.*` and `ToolWindow` come from the dependency
+Pegasus already has, and FuncUI would be two more packages to earn their place.
+Recorded because a decision whose original reason has lapsed should be re-argued
+in the open, not inherited silently.
+
+### 8.1 Two-way binding wants a re-entrancy guard
+
+The note list and the editor both read from and write to the same state, and the
+first version deadlocked the dispatcher on open. `refreshNotes` set
+`SelectedIndex`, which raised `SelectionChanged`, whose handler refreshed the
+editor, which refreshed the list. `Dispatcher.RunJobs` drains jobs queued while
+it is draining, so it never returned.
+
+The fix is two flags — `applying` for the editor, `syncingSelection` for the
+list — and a narrower `pullText` that deliberately does **not** touch the note
+list. The general rule, and it applies to any LunaP window doing two-way
+binding: a control being rewritten from state must not be able to report that
+rewrite back as a user action.
+
+Worth recording that the headless UI test caught this and manual clicking would
+not have: a human opening the window sees it hang and calls it slow, whereas the
+test hangs a build.
+
+---
+
+## 9. Why the tests are a separate project
+
+`EmuSen.WiseMan` is that repository's headless harness and was the natural home
+while Pegasus lived there, but WiseMan is C# and these tests are F#. The
+convergence property is the point of them, and CsCheck — which matched FsCheck
+well enough to help kill the `F#ascent` branch — cannot express a generator over
+an F# document model without the model being C# in the first place.
+
+So `EmuSen.Pegasus.Tests` exists, and it is the second and last name Pegasus
+spends. It contains no harness of its own: it is xunit and FsCheck over the same
+public surface the application uses.
+
+The original reason is now historical — there is no C# harness in this repository
+to have folded into — but the separation is kept, because a test project is the
+one boundary that does buy separability: it is what lets §11.2 reflect over the
+application assembly's references from outside it.
+
+---
+
+## 10. Sync
+
+Moved to `Pegasus_Sync.md`, which holds the topology, pairing, frame layout, the
+exchange, and an honest account of what the encryption is not. This section number
+is kept so the numbering above and below it does not shift.
+
+---
+
+## 11. The blank window, and what "agnostic" has to mean to be worth anything
+
+### 11.1 It shipped rendering nothing, and the suite was green
+
+The first published build opened a white rectangle. Every control existed, the
+window sized correctly, the socket layer worked, and 53 tests passed.
+
+The cause is one missing line. Every EmuSen `App` includes
+`avares://EmuSen.LunaP/Theme/LunaTheme.axaml`, which is `FluentTheme` plus the
+shared palette; `Mistress` does it in `App.axaml` and `Hotaru` the same way.
+Pegasus, ported from a standalone repo where it had added `FluentTheme` by hand,
+overrode `Initialize` **not at all** after the move. Without a control theme,
+`TextBox` and `ListBox` have no `Template`, and a control with no template
+occupies layout and draws nothing.
+
+**The suite missed it for a reason worth stating.** `LunaTheme.axaml` carries a
+comment predicting exactly this — *"the one WiseMan's TestAppBuilder includes
+too — a headless render pass that misses the theme silently asserts over
+untemplated controls."* The UI tests built their headless `Application` with a
+bare `FluentTheme()` instead of LunaP's theme. Every assertion walked the
+**logical** tree, which is fully populated whether or not anything is
+templated, so the tests were structurally incapable of seeing the defect and
+were also loading a different theme than the application. Both halves were
+wrong in the same direction.
+
+Two changes, and the second matters more than the first:
+
+- `Shell.applyTheme` is now the single place the style is loaded, and both the
+  application and the tests call it. They can no longer diverge.
+- A guard asserts every `TemplatedControl` in the window has a `Template` after
+  measure and arrange, and it was **made to go red on purpose**: with the theme
+  removed it fails naming `TextBox, ListBox`, which is the shipped symptom in
+  words. The rule about guard tests in EmuSen's
+  `EmuSen_Debugging_Tools_Reference_v5.md` §3.53 applies here exactly — the green
+  was worth nothing until the red existed.
+
+The general lesson for any LunaP consumer: a headless test that queries the
+logical tree proves the tree, not the rendering. If what can break is *whether
+anything is drawn*, the assertion has to be about templates or pixels.
+
+This defect is also the reason §7.1 treats the theme as part of the package
+contract rather than an incidental resource. The `avares://EmuSen.LunaP/` URI
+resolves out of the packaged assembly, and the template guard is what would catch
+it if a future package ever shipped without its compiled `.axaml`.
+
+### 11.2 What agnostic means here
+
+Pegasus is a notepad built on a windowing toolkit. It is not part of the
+emulator, and `EmuSen.LunaP` is intended to be usable on its own as a general
+Avalonia toolkit. Both statements are only true while Pegasus depends on LunaP
+and on nothing else of EmuSen's.
+
+That is a test rather than an intention: `Pegasus references the toolkit and
+nothing else of EmuSen` reflects over the assembly's own references and fails
+naming anything `EmuSen.*` other than `EmuSen.LunaP`. It reads direct references
+deliberately — LunaP's own dependencies on Galaxia and Cauldron are LunaP's
+business.
+
+When that test was written, it ended "and will be settled when it is packaged".
+That has now happened (§7.1), and the test passed across the move unchanged,
+which is the useful result: the reference graph the test describes was already
+correct, and packaging revealed no hidden edge into EmuSen. A test that has to be
+rewritten to survive a repository split was not testing what it claimed.
+
+Agnostic also means the three RIDs the project publishes are real targets rather
+than aspirations, and one defect was found by taking that seriously:
+`defaultWorkspaceRoot` was `~/.local/share/pegasus/workspace`, built from a
+literal `.local/share`. That is a Linux convention, wrong on Windows and
+unidiomatic on macOS, in a project whose `out/` has carried `osx-arm64`,
+`osx-x64` and `win-x64` since before Pegasus existed. It resolves through
+`SpecialFolder.LocalApplicationData` now.
+
+Changing that path could have stranded an existing workspace, so it does not: an
+existing directory at the old location keeps being used. This mirrors EmuSen's
+`ConfigStore` Directory / PreviousDirectory / LegacyDirectory order rather than
+inventing a second migration idiom — and it is the same rule that project's ROM
+library gets, which is that data a user authored is read, never quietly
+abandoned.

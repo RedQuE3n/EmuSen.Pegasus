@@ -1,29 +1,17 @@
-module Pegasus.App.Program
+module EmuSen.Pegasus.Program
 
 open System
 open Avalonia
 open Avalonia.Controls.ApplicationLifetimes
-open Avalonia.Themes.Fluent
-open Avalonia.FuncUI.Hosts
-open Pegasus.App.Controller
-
-type MainWindow(pad: Notepad) as this =
-    inherit HostWindow()
-
-    do
-        this.Title <- "Pegasus"
-        this.Width <- 1000.0
-        this.Height <- 680.0
-        this.Content <- Shell.view pad
+open EmuSen.LunaP
+open EmuSen.Pegasus.Controller
 
 type App() =
     inherit Application()
 
-    let pad =
-        new Notepad(defaultWorkspaceRoot, Environment.UserName)
+    let pad = new Notepad(defaultWorkspaceRoot, Environment.UserName)
 
-    override this.Initialize() =
-        this.Styles.Add(FluentTheme())
+    override this.Initialize() = Shell.applyTheme this
 
     override this.OnFrameworkInitializationCompleted() =
         match this.ApplicationLifetime with
@@ -33,7 +21,7 @@ type App() =
             | Some first -> pad.Open first.Id
             | None -> pad.CreateNote "scratch" |> ignore
 
-            desktop.MainWindow <- MainWindow pad
+            desktop.MainWindow <- Shell.PegasusWindow pad
             desktop.ShutdownRequested.Add(fun _ -> (pad :> IDisposable).Dispose())
         | _ -> ()
 
@@ -41,9 +29,6 @@ type App() =
 
 [<EntryPoint>]
 let main argv =
-    AppBuilder
-        .Configure<App>()
-        .UsePlatformDetect()
-        .WithInterFont()
-        .LogToTrace()
-        .StartWithClassicDesktopLifetime argv
+    // LunaApp, not a hand-rolled AppBuilder: it applies the saved theme and
+    // picks X11, which UsePlatformDetect does not do on Wayland.
+    LunaApp.Configure<App>().StartWithClassicDesktopLifetime argv

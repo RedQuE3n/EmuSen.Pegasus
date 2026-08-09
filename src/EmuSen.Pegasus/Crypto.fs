@@ -1,10 +1,10 @@
-namespace Pegasus.Core
+namespace EmuSen.Pegasus
 
 open System
 open System.Security.Cryptography
 open System.Text
 
-/// Join codes and the pre-shared-key envelope. Threat model in docs/Pegasus_Sync.md §5.
+/// Join codes and the pre-shared-key envelope. Threat model in Pegasus_Sync.md §5.
 module Crypto =
 
     [<Literal>]

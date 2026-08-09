@@ -1,11 +1,11 @@
-namespace Pegasus.Core
+namespace EmuSen.Pegasus
 
 open System
 open System.Buffers.Binary
 open System.IO
 
 /// The append-only note file. Layout and the recovery argument are in
-/// docs/Pegasus_Format.md.
+/// Pegasus_Format.md.
 module Store =
 
     let magic = "PGSS"B
@@ -120,7 +120,7 @@ module Store =
                 let record = recordBytes update
                 stream.Write(record, 0, record.Length)
                 // Reaches the OS here, so a process crash loses nothing; only a
-                // power cut can lose the tail. See docs/Pegasus_Format.md §4.
+                // power cut can lose the tail. See Pegasus_Format.md §4.
                 stream.Flush()
                 records <- records + 1
 
@@ -129,7 +129,7 @@ module Store =
         member _.Sync() = stream.Flush true
 
         /// Collapses the log to a single snapshot record through a temp file and
-        /// an atomic rename. See docs/Pegasus_Format.md §3.
+        /// an atomic rename. See Pegasus_Format.md §3.
         member _.Compact(snapshot: byte[]) =
             let temp = path + ".compacting"
 
@@ -147,7 +147,7 @@ module Store =
             records <- 1
 
         /// The readable projection beside the note. Regenerated, never read back
-        /// as truth -- docs/Pegasus_Format.md §5.
+        /// as truth -- Pegasus_Format.md §5.
         member _.WriteProjection(text: string) =
             let target = Path.ChangeExtension(path, ".md")
             let temp = target + ".tmp"

@@ -1,4 +1,4 @@
-namespace Pegasus.Core
+namespace EmuSen.Pegasus
 
 open System
 open System.IO
@@ -9,7 +9,7 @@ type NoteEntry =
       Deleted: bool }
 
 /// A directory of notes plus an index that is itself a note, so creation and
-/// rename merge through the same CRDT as text. See docs/Pegasus_Sync.md §6.
+/// rename merge through the same CRDT as text. See Pegasus_Sync.md §6.
 type Workspace(root: string) =
     let root = Path.GetFullPath root
     do Directory.CreateDirectory root |> ignore
@@ -74,7 +74,7 @@ type Workspace(root: string) =
               Name = name
               Deleted = false }
 
-    /// Tombstones the entry. The file stays -- docs/Pegasus_Sync.md §6.
+    /// Tombstones the entry. The file stays -- Pegasus_Sync.md §6.
     member _.Delete(id: NoteId) =
         match entries () |> Array.tryFind (fun e -> e.Id = id) with
         | Some existing -> append { existing with Deleted = true }

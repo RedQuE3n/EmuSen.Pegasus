@@ -1,25 +1,29 @@
-module Pegasus.Tests.UiTests
+module EmuSen.Pegasus.Tests.UiTests
 
 open System
 open System.IO
 open System.Threading
 open Avalonia
 open Avalonia.Controls
+open Avalonia.Controls.Primitives
 open Avalonia.Headless
 open Avalonia.LogicalTree
 open Avalonia.Threading
 open Avalonia.Themes.Fluent
-open Avalonia.FuncUI.Hosts
 open Xunit
-open Pegasus.Core
-open Pegasus.App.Controller
+open EmuSen.Pegasus
+open EmuSen.Pegasus.Controller
 
 type private HeadlessApp() =
     inherit Application()
-    override this.Initialize() = this.Styles.Add(FluentTheme())
+    // Shell.applyTheme, not a bare FluentTheme: loading a different theme than
+    // the application loads is what let a blank window pass the suite.
+    override this.Initialize() = Shell.applyTheme this
 
 // Avalonia may only be initialised once per process, so every test shares this.
-let private started =
+// LunaApp is deliberately not used here -- it resolves the saved theme through
+// ConfigStore, which a test has no business touching. See Pegasus_Design.md §9.
+let started =
     lazy
         (AppBuilder
             .Configure<HeadlessApp>()
@@ -27,14 +31,12 @@ let private started =
             .SetupWithoutStarting()
          |> ignore)
 
-let private tempRoot () =
+let tempRoot () =
     let dir = Path.Combine(Path.GetTempPath(), "pegasus-ui", Guid.NewGuid().ToString "N")
     Directory.CreateDirectory dir |> ignore
     dir
 
-/// FuncUI builds no XAML name scope, so controls are reached through the
-/// logical tree -- docs/Pegasus_Design.md §4.4.
-let private firstEditor (window: Window) =
+let private editorOf (window: Window) =
     window.GetLogicalDescendants()
     |> Seq.choose (fun c ->
         match box c with
@@ -53,20 +55,65 @@ let private pump (predicate: unit -> bool) =
     predicate ()
 
 [<Fact>]
-let ``the shell renders an editor bound to the open note`` () =
+let ``the window renders an editor bound to the open note`` () =
     started.Force()
     use pad = new Notepad(tempRoot (), "alice")
     pad.CreateNote "scratch" |> ignore
 
-    let window = HostWindow(Content = Pegasus.App.Shell.view pad)
+    let window = Shell.PegasusWindow pad
     window.Show()
     Dispatcher.UIThread.RunJobs()
 
-    let editor = firstEditor window
+    let editor = editorOf window
     editor.Text <- "typed into the window"
     Dispatcher.UIThread.RunJobs()
 
     Assert.Equal("typed into the window", pad.Text)
+    window.Close()
+
+[<Fact>]
+let ``every control in the window is actually templated`` () =
+    // The blank-window regression: without LunaP's theme the controls exist in
+    // the logical tree and render nothing, so every other test here still
+    // passed. Applying a template is the thing that was missing, so it is the
+    // thing asserted. See Pegasus_Design.md §11.
+    started.Force()
+    use pad = new Notepad(tempRoot (), "alice")
+    pad.CreateNote "scratch" |> ignore
+
+    let window = Shell.PegasusWindow pad
+    window.Show()
+    Dispatcher.UIThread.RunJobs()
+    window.Measure(Size(1000.0, 680.0))
+    window.Arrange(Rect(0.0, 0.0, 1000.0, 680.0))
+    Dispatcher.UIThread.RunJobs()
+
+    let untemplated =
+        window.GetLogicalDescendants()
+        |> Seq.choose (fun c ->
+            match box c with
+            | :? TemplatedControl as t when isNull t.Template -> Some(t.GetType().Name)
+            | _ -> None)
+        |> Seq.distinct
+        |> Seq.toArray
+
+    Assert.True(
+        untemplated.Length = 0,
+        $"""controls with no template, so they render blank: {String.Join(", ", untemplated)}"""
+    )
+
+    window.Close()
+
+[<Fact>]
+let ``the window is a LunaP ToolWindow and carries a placement key`` () =
+    // The point of the move: chrome, theme and geometry come from the shared
+    // toolkit rather than being rebuilt here. Pegasus_Design.md §8.
+    started.Force()
+    use pad = new Notepad(tempRoot (), "alice")
+    pad.CreateNote "scratch" |> ignore
+    let window = Shell.PegasusWindow pad
+    Assert.IsAssignableFrom<EmuSen.LunaP.Windowing.ToolWindow>(window) |> ignore
+    Assert.Equal("pegasus", window.WindowKey)
     window.Close()
 
 [<Fact>]
@@ -77,7 +124,7 @@ let ``a remote edit appears in the rendered editor`` () =
     hostPad.CreateNote "shared" |> ignore
     joinPad.CreateNote "shared" |> ignore
 
-    let window = HostWindow(Content = Pegasus.App.Shell.view joinPad)
+    let window = Shell.PegasusWindow joinPad
     window.Show()
     Dispatcher.UIThread.RunJobs()
 
@@ -88,7 +135,7 @@ let ``a remote edit appears in the rendered editor`` () =
     hostPad.Edit "written on the other machine"
 
     // The whole path: mailbox -> socket -> mailbox -> dispatcher -> TextBox.
-    let editor = firstEditor window
+    let editor = editorOf window
     Assert.True(pump (fun () -> editor.Text = "written on the other machine"))
 
     hostPad.Disconnect()
@@ -99,6 +146,7 @@ let ``a remote edit appears in the rendered editor`` () =
 let ``a note survives closing and reopening the notepad`` () =
     started.Force()
     let root = tempRoot ()
+
     let noteId =
         use pad = new Notepad(root, "alice")
         let entry = pad.CreateNote "durable"

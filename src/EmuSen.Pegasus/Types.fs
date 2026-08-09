@@ -1,8 +1,8 @@
-namespace Pegasus.Core
+namespace EmuSen.Pegasus
 
 open System
 
-/// Wire and file format versions. See docs/Pegasus_Format.md §1.
+/// Wire and file format versions. See Pegasus_Format.md §1.
 module Version =
     [<Literal>]
     let Protocol = 1uy
@@ -35,7 +35,7 @@ type Presence =
       Anchor: int }
 
 /// One message on the wire. Sync payloads are raw Yjs bytes, so a bridge to
-/// y-websocket stays a shim rather than a rewrite -- see docs/Pegasus_Sync.md §3.
+/// y-websocket stays a shim rather than a rewrite -- see Pegasus_Sync.md §3.
 type Frame =
     | Hello of PeerInfo
     | SyncStep1 of stateVector: byte[]

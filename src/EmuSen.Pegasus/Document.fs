@@ -1,4 +1,4 @@
-namespace Pegasus.Core
+namespace EmuSen.Pegasus
 
 open System
 open System.Security.Cryptography
@@ -8,7 +8,7 @@ open YDotNet.Document.StickyIndexes
 
 /// Client ids are squeezed between two YDotNet 0.6.0 defects: the default
 /// constructor draws from about 6 bits and collides, and any id at or above
-/// 2^32 breaks delta sync outright. docs/Pegasus_Design.md §4.5 and §4.7.
+/// 2^32 breaks delta sync outright. Pegasus_Design.md §4.5 and §4.7.
 module ClientId =
 
     /// Exclusive upper bound. At 2^32 and above, StateDiffV1 ignores the state
@@ -38,9 +38,9 @@ type private Command =
 ///
 /// YDotNet throws on overlapping transactions and its Doc.Text handle may only
 /// be taken outside one, so every read and write is funnelled through here and
-/// no Doc handle escapes. See docs/Pegasus_Design.md §4.2.
+/// no Doc handle escapes. See Pegasus_Design.md §4.2.
 type DocumentActor(?seed: byte[], ?clientId: uint64) as this =
-    // Never Doc() -- see ClientId above and docs/Pegasus_Design.md §4.5.
+    // Never Doc() -- see ClientId above and Pegasus_Design.md §4.5.
     let doc = new Doc(DocOptions(Id = defaultArg clientId (ClientId.fresh ())))
 
     // Must be taken before any transaction is opened -- Pegasus_Design.md §4.2.
@@ -194,7 +194,7 @@ type DocumentActor(?seed: byte[], ?clientId: uint64) as this =
             doc.Dispose()
 
 /// Where a caret belongs after the buffer changed underneath it. Pure, so the
-/// rule is tested without a window -- docs/Pegasus_Design.md §5.
+/// rule is tested without a window -- Pegasus_Design.md §5.
 module Caret =
 
     let adjust (oldText: string) (newText: string) (caret: int) =

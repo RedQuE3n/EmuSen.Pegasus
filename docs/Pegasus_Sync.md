@@ -11,6 +11,11 @@ An always-on relay is deferred, not rejected. The session abstraction is shaped 
 that a relay is simply a peer that never disconnects; adding one should not
 require the protocol to learn a new role.
 
+The host accepts exactly one joiner. `Host.AcceptAsync` is awaited once, so a
+session is a pair and not a group. This is a property of the current shell rather
+than of the protocol — the frame layout has nothing in it that assumes two — but
+it is what ships, and a reader should not infer more from "peer" than that.
+
 ## 2. Pairing
 
 The host displays an address and a join code such as `7-lantern-quartz`. The
@@ -22,6 +27,11 @@ room or over a phone, and §5 explains what it is actually protecting against. T
 words were chosen to be unambiguous when spoken.
 
 The code is case- and whitespace-insensitive, because it will be retyped by hand.
+
+The listening port is chosen by the operating system, not by the user, and is
+displayed alongside the code. It therefore differs every session, which is a
+nuisance for anyone trying to forward a fixed port and is a further reason §5
+recommends a tunnel instead.
 
 ## 3. Frame format
 
@@ -36,6 +46,8 @@ A frame is a tag byte followed by a payload:
 
 Strings use `BinaryWriter`'s 7-bit-encoded length prefix. Multi-byte integers are
 little endian.
+
+On the wire each frame is sealed (§5) and then length-prefixed with an int32.
 
 The encoding is bespoke rather than JSON because `System.Text.Json` cannot
 serialise F# unions and `PeerId` is one; the full account is in
@@ -57,6 +69,18 @@ just another `SyncStep1`.
 `Awareness` is sent on caret movement and is not persisted. Presence is
 disposable by nature; a stale cursor is noise, not data.
 
+A limitation of the current shell rather than of the protocol: `Awareness` frames
+are produced and delivered, and the session raises them, but nothing in the window
+subscribes, so remote carets are not drawn. The transport half is complete and
+tested; the presentation half is not written.
+
+A second one, in the same category: a `Session` is given the document that was
+open when it was created and holds it for its lifetime. Opening a different note
+while connected disposes that document underneath the live session. Disconnect
+first. This is untested — there is no case in the suite that switches notes on a
+connected session, and the failure mode is therefore stated as a hazard rather
+than as an observed behaviour.
+
 ## 5. What the encryption is and is not
 
 Every frame is sealed with AES-256-GCM under a key derived from the join code by
@@ -67,9 +91,9 @@ key without putting it on the wire.
 
 **The salt is fixed, and that is a real weakness.** Both peers must derive the
 same key from the code alone, with no round trip to agree on a random salt. A
-fixed salt means an attacker can precompute against the 9,216-code space. The
-iteration count raises the cost of doing so but does not change the shape of the
-problem.
+fixed salt means an attacker can precompute against the 9,216-code space (§2).
+The iteration count raises the cost of doing so but does not change the shape of
+the problem.
 
 So the honest statement of what this buys:
 
@@ -95,13 +119,19 @@ cannot drive an unbounded allocation before authentication has a chance to fail.
 ## 6. The workspace index
 
 A workspace is a directory of `.pegasus` notes plus `_index.pegasus`. The index is
-an ordinary Pegasus document holding a map of note id to display name.
+an ordinary Pegasus document.
 
 This is the design's one piece of genuine economy. Note creation and rename are
 concurrent operations on shared state and therefore need conflict resolution —
 and because the index is just another document, they get the same CRDT, the same
 file format, the same crash recovery and the same sync path as note text. There
 is no second mechanism to write, test, or reason about.
+
+The index holds one line per entry, `id \t name \t deleted`, appended rather than
+edited in place; the last line mentioning an id wins. A rename is therefore an
+append, not a mutation. Keeping it a plain `Y.Text` avoids introducing a second
+root type for what is already a solved problem — an earlier draft of this section
+described it as a map, which the implementation never was.
 
 Deletion tombstones the index entry and leaves the file on disk. Nothing the user
 authored is removed by the application.
