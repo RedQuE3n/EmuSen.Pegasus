@@ -1,0 +1,10 @@
+bin/
+obj/
+out/
+*.user
+
+# Local workspaces. A .pegasus file is the authoritative replica of somebody's
+# notes and must never be committed by accident; the .md projections beside
+# them are regenerated, so they are ignored here too. See docs/Pegasus_Format.md.
+*.pegasus
+workspace/
