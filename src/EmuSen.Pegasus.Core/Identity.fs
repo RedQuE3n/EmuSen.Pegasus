@@ -68,9 +68,6 @@ type Identity private (handle: Handle, key: ECDsa) =
 
     member _.Sign(data: byte[]) = key.SignData(data, HashAlgorithmName.SHA256)
 
-    member _.Verify(data: byte[], signature: byte[]) =
-        key.VerifyData(data, signature, HashAlgorithmName.SHA256)
-
     /// P-256, and Ed25519 would have been the better choice.
     ///
     /// .NET 10 does not have Ed25519 -- System.Security.Cryptography offers

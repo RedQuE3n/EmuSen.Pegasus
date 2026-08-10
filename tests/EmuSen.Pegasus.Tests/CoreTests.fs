@@ -25,7 +25,11 @@ let ``every frame case survives a codec round trip`` () =
           SyncStep2 [| 9uy; 8uy |]
           Update [| 0uy; 255uy; 7uy |]
           Awareness { Peer = peer; Caret = 12; Anchor = 4 }
-          Bye ]
+          Bye
+          Challenge (Crypto.newChallenge ())
+          Proof [| 4uy; 5uy; 6uy |]
+          Roster [| peer; Peers.named "bob" |]
+          Roster [||] ]
 
     for case in cases do
         Assert.Equal(case, Codec.decode (Codec.encode case))
@@ -33,6 +37,18 @@ let ``every frame case survives a codec round trip`` () =
 [<Fact>]
 let ``an empty frame is rejected rather than misread`` () =
     Assert.Throws<ProtocolError>(fun () -> Codec.decode [||] |> ignore)
+
+[<Fact>]
+let ``a roster that claims more peers than could fit is rejected`` () =
+    // The count is a claim until checked. Unchecked it is an allocation
+    // request from whoever is on the other end of the socket.
+    use ms = new MemoryStream()
+    use w = new IO.BinaryWriter(ms, Text.UTF8Encoding false, true)
+    w.Write 8uy
+    w.Write Int32.MaxValue
+    w.Flush()
+
+    Assert.Throws<ProtocolError>(fun () -> Codec.decode (ms.ToArray()) |> ignore)
 
 [<Fact>]
 let ``an unknown tag is rejected rather than ignored`` () =

@@ -32,6 +32,9 @@ module Codec =
     let private TagProof = 7uy
 
     [<Literal>]
+    let private TagRoster = 8uy
+
+    [<Literal>]
     let private TagDirect = 0uy
 
     [<Literal>]
@@ -95,6 +98,11 @@ module Codec =
                 w.Write p.Anchor)
         | Bye -> [| TagBye |]
         | Challenge nonce -> writeWith TagChallenge (fun w -> w.Write nonce)
+        | Roster peers ->
+            writeWith TagRoster (fun w ->
+                w.Write peers.Length
+                for peer in peers do
+                    writePeer w peer)
         | Proof signature -> writeWith TagProof (fun w -> w.Write signature)
 
     let decode (body: byte[]) : Frame =
@@ -111,6 +119,17 @@ module Codec =
             | TagUpdate -> Update payload
             | TagBye -> Bye
             | TagChallenge -> Challenge payload
+            | TagRoster ->
+                use r = new BinaryReader(new MemoryStream(payload), UTF8Encoding false)
+                let count = r.ReadInt32()
+
+                // A count is a claim until it has been checked. Three bytes is
+                // the smallest a peer could possibly encode to, so anything
+                // beyond that many is a lie and must not become an allocation.
+                if count < 0 || count > payload.Length / 3 then
+                    raise (ProtocolError $"roster claims {count} peers in a {payload.Length}-byte frame")
+
+                Roster(Array.init count (fun _ -> readPeer r))
             | TagProof -> Proof payload
             | TagHello ->
                 use r = new BinaryReader(new MemoryStream(payload), UTF8Encoding false)

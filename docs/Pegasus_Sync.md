@@ -66,6 +66,12 @@ A frame is a tag byte followed by a payload:
     5  Bye         no payload
     6  Challenge   a random nonce
     7  Proof       a signature over the other side's nonce
+    8  Roster      int32 count, then that many peers
+
+Tag 8 is Chariot's, not a peer's: two people on a socket already know who is
+there. `Chariot_Design.md` §6 covers what a roster is for. The count is checked
+against the frame it arrived in before anything is allocated, because a count is
+a claim until it has been looked at.
 
 Strings use `BinaryWriter`'s 7-bit-encoded length prefix. Multi-byte integers are
 little endian.

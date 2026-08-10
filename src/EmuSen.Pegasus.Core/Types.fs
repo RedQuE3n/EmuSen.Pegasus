@@ -5,13 +5,15 @@ open System
 /// Wire and file format versions.
 ///
 /// Protocol went to 2 when Hello started carrying a public key and the identity
-/// proof frames appeared. It is now actually sent, in Hello, which it never was
-/// at 1 -- two builds that disagreed used to discover it as a decode failure
-/// somewhere further down, and now say so in the first frame. See
-/// Pegasus_Format.md §1 for the file schema, which is unrelated and unchanged.
+/// proof frames appeared, and to 3 when Roster did. It is actually sent, in
+/// Hello, which it never was at 1 -- two builds that disagreed used to discover
+/// it as a decode failure somewhere further down, and now say so in the first
+/// frame. Adding a tag is a protocol change even though an old build would only
+/// ever meet it by talking to a new one. See Pegasus_Format.md §1 for the file
+/// schema, which is unrelated and unchanged.
 module Version =
     [<Literal>]
-    let Protocol = 2uy
+    let Protocol = 3uy
 
     [<Literal>]
     let FileSchema = 1uy
@@ -148,5 +150,9 @@ type Frame =
     | Bye
     | Challenge of nonce: byte[]
     | Proof of signature: byte[]
+    /// Who else is signed in. Sent by Chariot to a client that has proved
+    /// itself, and republished whenever the set changes. A peer never sends
+    /// this: two people on a socket already know who is there.
+    | Roster of peers: PeerInfo[]
 
 exception ProtocolError of string

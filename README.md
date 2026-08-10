@@ -78,7 +78,7 @@ switching notes while connected is not supported — disconnect first.
 
     dotnet test
 
-125 tests, all headless — no window is ever opened, including for the UI tests,
+126 tests, all headless — no window is ever opened, including for the UI tests,
 which drive a real Avalonia control tree under `Avalonia.Headless`. The suite
 covers frame and crypto round trips, torn-file recovery, compaction, caret
 arithmetic, property-based convergence under randomised interleavings, identity

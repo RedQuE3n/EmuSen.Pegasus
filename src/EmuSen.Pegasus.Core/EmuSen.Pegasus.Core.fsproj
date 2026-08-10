@@ -55,6 +55,7 @@
     <Compile Include="Identity.fs" />
     <Compile Include="Attestation.fs" />
     <Compile Include="Framing.fs" />
+    <Compile Include="Handshake.fs" />
   </ItemGroup>
 
 </Project>
