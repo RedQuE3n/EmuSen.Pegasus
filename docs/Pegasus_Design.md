@@ -463,9 +463,67 @@ just been told to trust.
 It is pinned explicitly now, and pinned *low*: a floor is a demand on every
 consumer, and nothing in the core uses anything newer. That is still one
 dependency, which is what §7's rule and the test in `CoreTests` are about —
-pinning changed the version, not the count. 0.2.1 is the corrected package;
-0.2.0 stays on nuget.org because published versions do not come back, and
-anything resolving it still works, it merely asks for more than it needs.
+pinning changed the version, not the count.
+
+**CORRECTION.** This section said "0.2.1 is the corrected package". That was
+wrong, and it was published as well as written. 0.2.1 shipped the identical
+defect it was released to fix, declaring exactly the `10.1.302` floor 0.2.0 had.
+
+The explicit `PackageReference` was only half the pin. The F# SDK does not skip
+its implicit `FSharp.Core` reference when it finds an explicit one — it adds a
+*second* `PackageReference` for the same id from `Microsoft.FSharp.NetSdk.props`,
+and NuGet resolves two entries for one id by taking the higher. The condition
+guarding that props file is `DisableImplicitFSharpCoreReference` alone, which was
+never set. `0.2.2` sets it, and is the first package whose nuspec carries one
+`FSharp.Core` entry at `10.0.110`.
+
+**Why it was verified and still wrong**, which is the part worth keeping. On this
+machine both entries were `10.0.110`, because the SDK here ships the version that
+was pinned. The duplicate therefore resolved to the right answer, the locally
+packed nuspec was correct, and the check performed was a check that could not
+have failed. The versions only differ on a runner — the same place the original
+defect was only visible. *A pin that holds only where the two versions already
+agree is not a pin, and confirming it against an artifact that could not have
+disagreed is not a confirmation.*
+
+**A second correction, about the tests.** This section previously credited "the
+test in `CoreTests`", and the README claimed the core "declares one dependency,
+`FSharp.Core`, and a test keeps it that way". No such test existed. The three
+guards in `CoreTests` read `GetReferencedAssemblies` on a *built assembly*; a
+package's dependency list is a different artifact, and nothing was reading it.
+The claim was a hazard described as a behaviour for the whole of 0.1.0 through
+0.2.2. It is a behaviour now, and both guards were made to fail on purpose
+before being trusted (§5):
+
+- `the core declares one dependency, and declares it itself` asks MSBuild for the
+  `PackageReference` items the core *evaluates to*, not the ones written in the
+  file, because the defect was an item nobody wrote. It asserts the count and the
+  *definer* rather than the version — the count and the definer differ on every
+  machine, where the versions differ only on some, so it fails here as well as on
+  a runner. Sabotaged both ways: restoring the implicit reference turns it red
+  with two `FSharp.Core` entries at the same version, and removing the explicit
+  one turns it red with the reference attributed to `Microsoft.FSharp.NetSdk`.
+- `publish-core.yml` opens the `.nupkg` it is about to upload and compares what it
+  declares against what the project asked for, failing the job before the push.
+  A push is irreversible, so the check that matters is the one before it, and
+  there was nothing there when 0.2.0 and 0.2.1 went out.
+
+`0.2.0` and `0.2.1` cannot be removed — published versions do not come back —
+and both still work. They merely ask for more than they need, but "merely" is
+doing real work in that sentence: a consumer pinning `FSharp.Core` at `10.0.110`
+gets NU1605 from either, which is how Chariot found this in the first place.
+Both were confirmed to still do it, by restoring each in turn from nuget.org
+into a scratch consumer and reading the warning back.
+
+**They should be unlisted, and that is outstanding.** Deletion is not available
+and unlisting is — a distinction the first version of this paragraph missed by
+reasoning from "cannot be deleted" to "must be left alone". Unlisting keeps them
+resolvable for anything that already pins them while taking them out of search
+and out of floating resolution, which is the right end state for two versions
+whose only distinguishing feature is a defect. It is an action on the nuget.org
+account, not a change in this repository: nothing here can perform it, because
+the publishing workflow deliberately holds no long-lived credential, and a key
+able to unlist would undo that.
 
 Inside this repository the application takes a `ProjectReference` rather than
 the package. A packing step between editing a frame and running the tests would

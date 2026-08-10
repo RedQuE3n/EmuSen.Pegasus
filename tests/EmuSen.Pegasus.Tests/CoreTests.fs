@@ -1,7 +1,9 @@
 module EmuSen.Pegasus.Tests.CoreTests
 
 open System
+open System.Diagnostics
 open System.IO
+open System.Text.Json
 open Xunit
 open FsCheck
 open FsCheck.Xunit
@@ -526,6 +528,91 @@ let ``the core carries nothing a server would have to take with it`` () =
     Assert.True(
         carried.Length = 0,
         $"""the core would make every consumer take: {String.Join(", ", carried)}"""
+    )
+
+/// The core's project file, located from this source file rather than from the
+/// working directory, which under a test runner is the output folder.
+let private coreProject =
+    Path.Combine(__SOURCE_DIRECTORY__, "..", "..", "src", "EmuSen.Pegasus.Core", "EmuSen.Pegasus.Core.fsproj")
+    |> Path.GetFullPath
+
+/// The `PackageReference` items MSBuild *ends up with* for the core, which is
+/// not the same list as the ones written in the file — and that difference is
+/// the entire point of the test below. Evaluation only: `-getItem` runs no
+/// target, so this reads the project without building or writing to `obj/`.
+///
+/// Each entry is the package id, the version, and the name of the project or
+/// `.props` file that put it there.
+let private declaredPackageReferences () =
+    let psi = ProcessStartInfo("dotnet", $"msbuild \"{coreProject}\" -getItem:PackageReference -nologo")
+    psi.RedirectStandardOutput <- true
+    psi.RedirectStandardError <- true
+    use proc = Process.Start psi
+    let out = proc.StandardOutput.ReadToEnd()
+    let err = proc.StandardError.ReadToEnd()
+    proc.WaitForExit()
+
+    if proc.ExitCode <> 0 then
+        failwith $"could not evaluate {coreProject}:\n{err}{out}"
+
+    use doc = JsonDocument.Parse out
+
+    match doc.RootElement.GetProperty("Items").TryGetProperty "PackageReference" with
+    | true, items ->
+        items.EnumerateArray()
+        |> Seq.map (fun item ->
+            item.GetProperty("Identity").GetString(),
+            item.GetProperty("Version").GetString(),
+            item.GetProperty("DefiningProjectName").GetString())
+        |> Seq.toList
+    | _ -> []
+
+[<Fact>]
+let ``the core declares one dependency, and declares it itself`` () =
+    // The README and Design §7 both say the core declares one dependency and
+    // that a test keeps it that way. Until this existed, no test did: the three
+    // guards above read GetReferencedAssemblies on a BUILT assembly, which sees
+    // what the compiler emitted a reference to, and a package's dependency list
+    // is a different artifact that nothing was reading. Design §7.1 records the
+    // version of this claim that was overstated and for how long.
+    //
+    // Why MSBuild's evaluated items rather than the text of the .fsproj: the
+    // defect this exists to catch is an item nobody wrote. The F# SDK does not
+    // skip its implicit FSharp.Core reference when it finds an explicit one, it
+    // adds a SECOND PackageReference for the same id from
+    // Microsoft.FSharp.NetSdk.props, and NuGet resolves the pair by taking the
+    // higher. Reading the file would show one reference and prove nothing.
+    //
+    // AND WHY THE CHECK IS ON THE COUNT AND THE DEFINER, NOT THE VERSION. Where
+    // the implicit and explicit versions agree — any machine whose SDK ships the
+    // pinned FSharp.Core, which is every developer machine here — the duplicate
+    // resolves to the right answer and is invisible in the packed nuspec. That
+    // is exactly how 0.2.1 shipped the bug it was published to fix, verified
+    // locally against a pack that could not have disagreed. The count and the
+    // definer differ on every machine, so this fails here as well as on a runner.
+    //
+    // The version deliberately is not asserted. It is a policy choice argued
+    // beside the reference in the .fsproj, and a number repeated in two files is
+    // a number that will eventually disagree with itself.
+    let declared = declaredPackageReferences ()
+
+    let described =
+        declared |> List.map (fun (id, version, definedBy) -> $"{id} {version} (from {definedBy})")
+
+    Assert.True(
+        declared.Length = 1,
+        $"""the core declares {declared.Length} dependencies rather than one, and every consumer inherits all of them: {String.Join(", ", described)}"""
+    )
+
+    let id, _, definedBy = List.head declared
+
+    Assert.Equal("FSharp.Core", id)
+
+    // Parenthesised because F# reads `ident = expr` in an argument position as a
+    // named argument rather than a comparison.
+    Assert.True(
+        (definedBy = "EmuSen.Pegasus.Core"),
+        $"FSharp.Core is declared by {definedBy} rather than by the core's own project file, so its version is whatever SDK happens to build it and the published package differs by who built it"
     )
 
 [<Fact>]

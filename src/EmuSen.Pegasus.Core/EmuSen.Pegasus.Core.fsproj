@@ -40,12 +40,18 @@
          with itself. -->
     <IsPackable>true</IsPackable>
     <PackageId>EmuSen.Pegasus.Core</PackageId>
-    <!-- 0.2.0, and the bump is real. Protocol went from 3 to 4, the Agree frame
-         and the Agreement module arrived with the key agreement, and Chariot is
-         on the InternalsVisibleTo list because a server that signs needs
-         somewhere to keep a key. A consumer on 0.1.0 cannot talk to one on
-         0.2.0 — Hello says so in the first frame rather than letting it be
-         discovered as a decode failure further down. -->
+    <!-- 0.2.0 was the real bump. Protocol went from 3 to 4, the Agree frame and
+         the Agreement module arrived with the key agreement, and Chariot is on
+         the InternalsVisibleTo list because a server that signs needs somewhere
+         to keep a key. A consumer on 0.1.0 cannot talk to one on 0.2.0 — Hello
+         says so in the first frame rather than letting it be discovered as a
+         decode failure further down.
+
+         0.2.1 and 0.2.2 carry no protocol change at all. They are the two
+         attempts at the FSharp.Core pin below, and only the second one held;
+         what went wrong in between is worth reading before touching that pin.
+         Both earlier versions remain resolvable on nuget.org and both emit an
+         NU1605 downgrade at any consumer holding FSharp.Core 10.0.110. -->
     <Version>0.2.2</Version>
     <Authors>Tristan Pelland</Authors>
     <Description>Wire types, frame codec, sealed envelope and identity keys shared by Pegasus and Chariot.</Description>
