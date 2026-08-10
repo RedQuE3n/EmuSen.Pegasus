@@ -369,25 +369,35 @@ other projects consume it. Four ways to cross that boundary were considered:
   LunaP worth depending on (§8) would stop arriving, and the whole argument for
   using a shared toolkit is that it accumulates them.
 - **Git submodule of EmuSen-Project.** Rejected: it makes building a notepad
-  require checking out an emulator, which gives up most of what the split was for.
+  require checking out an emulator, which gives up most of what the split was
+  for. That objection has since dissolved on its own — LunaP has its own
+  repository and a submodule of *it* would carry no emulator — but the package
+  is still the better answer, for the reason in the last paragraph of this
+  section: a package is a boundary, and a submodule is a way of pretending
+  there isn't one.
 - **Drop LunaP and use raw Avalonia.** Rejected on evidence rather than taste —
   §8 records that the hand-rolled bootstrap this would return to is exactly what
   silently dropped `UseX11` on Wayland.
 - **Publish LunaP as a NuGet package.** Adopted.
 
-`EmuSen.LunaP` is packed at 0.1.0, and **it is the only package this repository
-hand-carries.** That is a correction: it used to be three. LunaP declared
-`EmuSen.Galaxia` and `EmuSen.Cauldron` as hard dependencies, so both had to be
-packed and copied here alongside it, and a consumer outside EmuSen-Project
-cannot resolve a `ProjectReference` to either.
+`EmuSen.LunaP` is packed at 0.2.0, and **it is the only package this repository
+hand-carries.** That is a correction: it used to be three, from a repository
+that is no longer where the toolkit lives.
 
-They are gone because LunaP stopped naming them. `EmuSen_LunaP.md` §19 in
-EmuSen-Project is the account; the short version is that a settings seam
-replaced Galaxia's `ConfigFile`, and the two files that genuinely knew about
-EmuSen — a console keyboard map and a telemetry dashboard — moved to the
-projects that own those subjects. LunaP's nuspec now declares Avalonia and
-nothing else, and a test there asserts the assembly references nothing of
-EmuSen's at all.
+LunaP declared `EmuSen.Galaxia` and `EmuSen.Cauldron` as hard dependencies, so
+both had to be packed and copied here alongside it. They are gone because LunaP
+stopped naming them — a settings seam replaced Galaxia's `ConfigFile`, and the
+two files that genuinely knew about EmuSen, a console keyboard map and a
+telemetry dashboard, moved to the projects that own those subjects. LunaP's
+nuspec now declares Avalonia and nothing else, and tests on both sides of the
+boundary assert it.
+
+**And then the toolkit left EmuSen entirely**, to
+<https://github.com/RedQuE3n/EmuSen.LunaP>, with its sixteen commits of history.
+`docs/LunaP.md` §19 and §20 there are the account. Nothing changed here except
+the version and where the `dotnet pack` is run — which is the point of having
+crossed the boundary with a package in the first place: this repository never
+depended on where the source was, only on the artifact.
 
 This does not weaken LunaP's layering rule; it enforces it. That rule now says
 LunaP may reference Avalonia and nothing else, and its purpose is to stop a
@@ -400,9 +410,9 @@ this cost a consumer a core" as the question being asked.
 Two limitations, stated rather than discovered later:
 
 - The package feed is currently a folder, `local-packages/`, that `NuGet.config`
-  resolves relative to itself. It is populated by `dotnet pack` in EmuSen-Project.
-  GitHub Packages is the intended destination and the reason this is a folder
-  today is only that the packages have not been pushed there yet.
+  resolves relative to itself. It is populated by `dotnet pack` in a checkout of
+  the LunaP repository. A real feed is the intended destination and the reason
+  this is a folder today is only that the package has not been pushed to one.
 - Every package involved is stamped `0.1.0` and stays there. NuGet caches by id
   and version, so repacking after a change does not propagate and a build fails
   on code that was just written as though it did not exist. The workaround is to

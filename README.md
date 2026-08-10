@@ -16,7 +16,7 @@ that shaped the result is narrower than "a shared notepad": **no party may lose
 information.** That single constraint chooses the architecture, and
 `docs/Pegasus_Design.md` §2 explains why nothing simpler than a CRDT satisfies it.
 
-Pegasus was built inside the [EmuSen](https://github.com/RedQuE3n/EmuSen-Project)
+Pegasus was built inside the [EmuSen](https://github.com/RedQuE3n/EmuSen)
 emulator project and moved here once it depended on nothing of EmuSen's but the
 shared Avalonia toolkit.
 
@@ -35,16 +35,17 @@ it that way.
 
 ## Building
 
-Pegasus depends on `EmuSen.LunaP`, the shared Avalonia toolkit, which lives in
-the EmuSen repository and is consumed here as a NuGet package. Until it is on
-GitHub Packages, `NuGet.config` points at `local-packages/`, a folder feed you
-populate from a checkout of EmuSen-Project:
+Pegasus depends on [`EmuSen.LunaP`](https://github.com/RedQuE3n/EmuSen.LunaP),
+a small Avalonia toolkit, consumed here as a NuGet package. Until it is on a
+real feed, `NuGet.config` points at `local-packages/`, a folder feed you populate
+from a checkout of that repository:
 
-    dotnet pack EmuSen.LunaP/EmuSen.LunaP.csproj -c Release -o <path>/Pegasus/local-packages
+    dotnet pack src/EmuSen.LunaP/EmuSen.LunaP.csproj -c Release -o <path>/Pegasus/local-packages
 
-That is one package, and it used to be three: LunaP declared `EmuSen.Galaxia`
-and `EmuSen.Cauldron` as hard dependencies, so both had to be carried here too.
-It now declares Avalonia and nothing else — `docs/Pegasus_Design.md` §7.1.
+That is one package, and it used to be three carried out of the emulator project:
+LunaP declared `EmuSen.Galaxia` and `EmuSen.Cauldron` as hard dependencies, so
+both had to come too. It has its own repository now and declares Avalonia and
+nothing else — `docs/Pegasus_Design.md` §7.1.
 
 Then:
 
