@@ -25,6 +25,12 @@ module Codec =
     [<Literal>]
     let private TagBye = 5uy
 
+    [<Literal>]
+    let private TagChallenge = 6uy
+
+    [<Literal>]
+    let private TagProof = 7uy
+
     /// Frames are bounded so a malformed or hostile length cannot make us
     /// allocate arbitrarily; see Pegasus_Sync.md §5.
     [<Literal>]
@@ -67,7 +73,12 @@ module Codec =
     /// happen above this, in Pegasus.Net.
     let encode (frame: Frame) : byte[] =
         match frame with
-        | Hello peer -> writeWith TagHello (fun w -> writePeer w peer)
+        | Hello(peer, publicKey, protocol) ->
+            writeWith TagHello (fun w ->
+                w.Write protocol
+                writePeer w peer
+                w.Write publicKey.Length
+                w.Write publicKey)
         | SyncStep1 sv -> writeWith TagSyncStep1 (fun w -> w.Write sv)
         | SyncStep2 diff -> writeWith TagSyncStep2 (fun w -> w.Write diff)
         | Update u -> writeWith TagUpdate (fun w -> w.Write u)
@@ -77,6 +88,8 @@ module Codec =
                 w.Write p.Caret
                 w.Write p.Anchor)
         | Bye -> [| TagBye |]
+        | Challenge nonce -> writeWith TagChallenge (fun w -> w.Write nonce)
+        | Proof signature -> writeWith TagProof (fun w -> w.Write signature)
 
     let decode (body: byte[]) : Frame =
         if body.Length = 0 then
@@ -91,9 +104,23 @@ module Codec =
             | TagSyncStep2 -> SyncStep2 payload
             | TagUpdate -> Update payload
             | TagBye -> Bye
+            | TagChallenge -> Challenge payload
+            | TagProof -> Proof payload
             | TagHello ->
                 use r = new BinaryReader(new MemoryStream(payload), UTF8Encoding false)
-                Hello(readPeer r)
+                let protocol = r.ReadByte()
+                let peer = readPeer r
+
+                // Length-prefixed rather than "the rest of the frame", so the
+                // Hello can grow another field later without the key having to
+                // be last. Bounded against the frame we already hold, so a
+                // hostile length cannot ask for an arbitrary allocation.
+                let keyLength = r.ReadInt32()
+
+                if keyLength < 0 || keyLength > payload.Length then
+                    raise (ProtocolError $"Hello declares a {keyLength}-byte key inside a {payload.Length}-byte frame")
+
+                Hello(peer, r.ReadBytes keyLength, protocol)
             | TagAwareness ->
                 use r = new BinaryReader(new MemoryStream(payload), UTF8Encoding false)
                 let peer = readPeer r

@@ -44,7 +44,8 @@ type App(identityRoot: string, workspaceRoot: string) =
                 // Constructed HERE, not above: nothing in the workspace is
                 // opened or written while the machine is sitting unattended at
                 // the sign-in prompt, and no note is ever opened as nobody.
-                let pad = new Notepad(workspaceRoot, identity.Peer)
+                let pad =
+                    new Notepad(workspaceRoot, identity, pinnedTrust identityRoot identity.Handle)
 
                 // Start on a note so the editor is usable immediately.
                 match pad.Notes |> Array.tryHead with

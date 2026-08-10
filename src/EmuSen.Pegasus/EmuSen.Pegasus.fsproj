@@ -22,7 +22,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="Db.fs" />
     <Compile Include="IdentityStore.fs" />
+    <Compile Include="KnownPeers.fs" />
     <Compile Include="Document.fs" />
     <Compile Include="Store.fs" />
     <Compile Include="Workspace.fs" />
@@ -35,6 +37,18 @@
 
   <ItemGroup>
     <ProjectReference Include="..\EmuSen.Pegasus.Core\EmuSen.Pegasus.Core.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Identities and pinned peer keys are rows, not files. Microsoft.Data.Sqlite
+         alone resolves SQLitePCLRaw 2.1.11 transitively, which carries a known
+         high-severity advisory (GHSA-2m69-gcr7-jv3q), the same one that helped
+         retire the C# Chariot's stack, so taking it silently here would be
+         indefensible. Pinning the 3.0.5 bundle overrides the transitive version
+         and a "dotnet list package" vulnerability audit comes back clean.
+         EmuSen pins the identical pair for the same reason; keep them in step. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
   </ItemGroup>
 
   <ItemGroup>

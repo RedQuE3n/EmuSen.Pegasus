@@ -2,10 +2,16 @@ namespace EmuSen.Pegasus
 
 open System
 
-/// Wire and file format versions. See Pegasus_Format.md §1.
+/// Wire and file format versions.
+///
+/// Protocol went to 2 when Hello started carrying a public key and the identity
+/// proof frames appeared. It is now actually sent, in Hello, which it never was
+/// at 1 -- two builds that disagreed used to discover it as a decode failure
+/// somewhere further down, and now say so in the first frame. See
+/// Pegasus_Format.md §1 for the file schema, which is unrelated and unchanged.
 module Version =
     [<Literal>]
-    let Protocol = 1uy
+    let Protocol = 2uy
 
     [<Literal>]
     let FileSchema = 1uy
@@ -78,14 +84,19 @@ type NoteId =
     static member New() = NoteId(Guid.NewGuid().ToString("N"))
     member this.Value = let (NoteId v) = this in v
 
-/// Who is at the other end, as far as this peer can tell.
+/// Who is at the other end.
 ///
-/// "As far as it can tell" is load-bearing: the handle here was asserted by
-/// whoever sent the Hello and nothing checked it. Anybody holding the join code
-/// can claim to be anybody. Binding a handle to its key across the wire -- a
-/// signed challenge, and the peer's key pinned from a previous session -- is the
-/// pass after this one, and until it lands a displayed handle is a convenience,
-/// not authentication.
+/// This used to carry the warning that the handle was asserted and unchecked.
+/// It no longer is: a peer sends its public key in Hello, signs a challenge with
+/// the matching private key, and the Id here must be that key's fingerprint or
+/// the session is refused. See Attestation below, and Session.fs for where the
+/// exchange is driven.
+///
+/// What that buys and what it does not is worth keeping straight. It proves the
+/// far side holds the key whose fingerprint it claims. Whether that key is the
+/// person you meant is a separate question, answered by pinning the key the
+/// first time you see it and refusing a change later -- KnownPeers in the
+/// application.
 type PeerInfo =
     { Id: PeerId
       Handle: Handle
@@ -98,14 +109,25 @@ type Presence =
       Caret: int
       Anchor: int }
 
-/// One message on the wire. Sync payloads are raw Yjs bytes, so a bridge to
-/// y-websocket stays a shim rather than a rewrite -- see Pegasus_Sync.md §3.
+/// One message on the wire.
+///
+/// Sync payloads are raw Yjs bytes, so a bridge to a y-websocket client stays a
+/// shim at the frame boundary rather than a rewrite of the document model --
+/// Pegasus_Sync.md §3 has the tag assignments and the byte layout.
+///
+/// Hello carries the protocol version and the sender's public key. Challenge
+/// and Proof are the identity exchange: each side sends a random nonce and each
+/// side signs the other's, so the proof is mutual and neither end is trusted
+/// first. Nothing that touches the document is accepted until it has verified,
+/// which is why the exchange comes before SyncStep1 rather than beside it.
 type Frame =
-    | Hello of PeerInfo
+    | Hello of peer: PeerInfo * publicKey: byte[] * protocol: byte
     | SyncStep1 of stateVector: byte[]
     | SyncStep2 of diff: byte[]
     | Update of update: byte[]
     | Awareness of Presence
     | Bye
+    | Challenge of nonce: byte[]
+    | Proof of signature: byte[]
 
 exception ProtocolError of string

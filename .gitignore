@@ -9,6 +9,13 @@ out/
 *.pegasus
 workspace/
 
+# identity.db holds password-sealed private keys and the peers a machine has
+# pinned. Nothing about it is shareable, and the -wal and -shm companions carry
+# the same rows before a checkpoint.
+*.db
+*.db-wal
+*.db-shm
+
 # The folder feed NuGet.config points at. The packages in it are built from
 # EmuSen-Project and are not this repository's to carry.
 local-packages/*.nupkg

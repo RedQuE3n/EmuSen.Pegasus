@@ -13,10 +13,14 @@ open EmuSen.Pegasus
 
 let private peer = Peers.named "tristan"
 
+/// A public key shaped like a real one, for frames that only have to survive a
+/// round trip. Attestation's own tests use real keys.
+let private publicKey = (Peers.named "tristan").Id.Value |> System.Text.Encoding.UTF8.GetBytes
+
 [<Fact>]
 let ``every frame case survives a codec round trip`` () =
     let cases =
-        [ Hello peer
+        [ Hello(peer, publicKey, Version.Protocol)
           SyncStep1 [| 1uy; 2uy; 3uy |]
           SyncStep2 [| 9uy; 8uy |]
           Update [| 0uy; 255uy; 7uy |]

@@ -90,36 +90,46 @@ let ``the fingerprint survives a restart, which a fresh GUID did not`` () =
     Assert.Equal(first.Fingerprint, second.Fingerprint)
     Assert.Equal(first.Peer.Color, second.Peer.Color)
 
+/// Naive substring search over bytes. The stored secret is a raw BLOB now, so
+/// the thing to look for is the key itself rather than a base64 rendering of it.
+let private containsBytes (needle: byte[]) (haystack: byte[]) =
+    let n = needle.Length
+
+    if n = 0 || haystack.Length < n then
+        false
+    else
+        Seq.exists (fun i -> Array.sub haystack i n = needle) (seq { 0 .. haystack.Length - n })
+
 [<Fact>]
 let ``the private key is not written in the clear`` () =
-    // Compared as base64, because base64 is how the file stores it.
+    // Every file under the root, not only identity.db. If a journal or a WAL
+    // companion is ever produced, the row can be sitting in it, and a guard
+    // that reads one file would say the key was sealed while it was not.
     //
-    // The first version of this guard compared the raw PKCS#8 bytes against the
-    // file's bytes. Those can never match whatever is written, so it passed
-    // against a build deliberately altered to store the key UNSEALED, and was
-    // worth nothing. Run a guard against the failure it claims to catch before
-    // believing it -- Pegasus_Design.md §11 is the same lesson at larger scale.
-    //
-    // The length assertion is the second, independent check: a sealed blob is
-    // exactly a nonce and a tag longer than what it wraps, so storing the key
-    // in the clear fails this too even if the base64 comparison were fooled.
+    // The first version of this guard, against the old text format, compared
+    // raw PKCS#8 bytes to a file storing base64. Those could never match, so it
+    // passed against a build deliberately altered to store the key UNSEALED and
+    // was worth nothing. Storing a BLOB makes the honest comparison the obvious
+    // one, which is a small argument in the format's favour.
     let root = tempRoot ()
     let identity = create root "alice" "pw"
     let secret = identity.ExportPrivateKey()
-    let onDisk = File.ReadAllText(Path.Combine(root, "alice.id"))
 
-    Assert.DoesNotContain(Convert.ToBase64String secret, onDisk)
+    let leaking =
+        Directory.GetFiles(root, "*", SearchOption.AllDirectories)
+        |> Array.filter (fun file -> containsBytes secret (File.ReadAllBytes file))
 
-    let sealedLength =
-        onDisk.Split '\n'
-        |> Array.pick (fun line ->
-            if line.StartsWith "secret " then
-                Some (Convert.FromBase64String(line.Substring 7)).Length
-            else
-                None)
+    Assert.True(leaking.Length = 0, $"""the private key appears in: {String.Join(", ", leaking)}""")
 
-    // Sealed, so exactly a nonce and a tag longer than the key it wraps.
-    Assert.Equal(secret.Length + Crypto.NonceBytes + Crypto.TagBytes, sealedLength)
+    // Independently: what is stored is exactly a nonce and a tag longer than
+    // what it wraps, which storing the key unsealed also fails.
+    use db = Db.openAt (IdentityStore.databaseIn root)
+
+    let stored =
+        Db.query db "SELECT secret FROM identities WHERE handle = 'alice'" [] (fun r ->
+            (r.GetFieldValue<byte[]> 0).Length)
+
+    Assert.Equal<int list>([ secret.Length + Crypto.NonceBytes + Crypto.TagBytes ], stored)
 
 [<Fact>]
 let ``the wrong password is refused, and named as such`` () =
@@ -152,15 +162,36 @@ let ``a handle already on this machine is not silently overwritten`` () =
     | Error e -> failwith e.Message
 
 [<Fact>]
-let ``a damaged identity file is reported, not crashed on`` () =
+let ``an identity stored under an unknown kdf is refused, not guessed at`` () =
+    // A future build might store argon2id here. This one must say it cannot
+    // read that rather than derive a key with the wrong function and report a
+    // wrong password, which would send the user hunting for the wrong problem.
     let root = tempRoot ()
     create root "alice" "pw" |> ignore
-    let path = Path.Combine(root, "alice.id")
-    File.WriteAllText(path, File.ReadAllText(path).Replace("secret ", "shredded "))
+
+    do
+        use db = Db.openAt (IdentityStore.databaseIn root)
+        Db.executeWith db "UPDATE identities SET kdf = 'argon2id'" [] |> ignore
+
+    match IdentityStore.unlock root (Handle.Parse "alice") "pw" with
+    | Error(Unreadable why) -> Assert.Contains("argon2id", why)
+    | other -> failwith $"expected Unreadable, got {other}"
+
+[<Fact>]
+let ``a corrupt store is reported, not crashed on`` () =
+    let root = tempRoot ()
+    create root "alice" "pw" |> ignore
+    File.WriteAllBytes(IdentityStore.databaseIn root, Array.init 4096 (fun i -> byte (i % 251)))
 
     match IdentityStore.unlock root (Handle.Parse "alice") "pw" with
     | Error(Unreadable _) -> ()
     | other -> failwith $"expected Unreadable, got {other}"
+
+[<Fact>]
+let ``a store with no identity in it is not an error, it is empty`` () =
+    let root = tempRoot ()
+    Assert.Empty(IdentityStore.list root)
+    Assert.False(IdentityStore.exists root (Handle.Parse "alice"))
 
 [<Fact>]
 let ``the key survives the round trip through the file`` () =

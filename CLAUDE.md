@@ -13,7 +13,7 @@ as much as the code, and it must survive somebody reading it critically.
 | `docs/Pegasus_Design.md` | Why a CRDT, why F#, Phase 0 evidence, dependency defects, assembly boundaries, testing discipline, the startup path |
 | `docs/Pegasus_Format.md` | The `.pegasus` file, append-only log, compaction, durability, the `.md` projection |
 | `docs/Pegasus_Sync.md` | Topology, pairing, frame layout, the exchange, what the encryption is and is not |
-| `docs/Pegasus_Identity.md` | Handles, the identity file, the password envelope, the fingerprint, what a sign-in proves |
+| `docs/Pegasus_Identity.md` | Handles, the identity store, the password envelope, the identity proof, trust on first use |
 
 `README.md` is the front door for a reader who has not opened the code. It
 summarises; it never becomes the place a decision is recorded.
@@ -148,5 +148,9 @@ Commit, push and merge only when asked.
   EmuSen-Project. `NuGet.config` points at it. `Design §7.1` records why this
   is a package rather than a submodule or a vendored copy.
 - GPL-3.0-or-later, a consequence of linking LunaP (`Design §7.1`).
+- `Microsoft.Data.Sqlite` **must** be accompanied by an explicit
+  `SQLitePCLRaw.bundle_e_sqlite3` 3.0.5 pin. Alone it resolves a transitive
+  2.1.11 with a high-severity advisory. `Identity §3.2` records it; EmuSen pins
+  the same pair. Audit with a `dotnet list package` vulnerability check.
 - Never commit a `.pegasus` file or a `workspace/` directory — someone's real
   notes. `.gitignore` covers it; do not defeat it.

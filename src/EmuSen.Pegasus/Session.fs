@@ -52,6 +52,12 @@ module Framing =
         }
 
 /// Proves both ends derived the same key from the join code, without sending it.
+///
+/// This is a different question from the one Attestation answers and both are
+/// asked. The join code decides whether a stranger may open a session at all;
+/// the signature decides who they are once they have. Passing this proves
+/// somebody read the code aloud to you, and nothing more -- an impostor who was
+/// in the room when you did will get past it, and be refused by the proof.
 module Handshake =
 
     let private challengeLength = 32
@@ -90,7 +96,25 @@ module Handshake =
 
 /// One connected peer. Both host and joiner drive this identically, which is
 /// what keeps a future relay from needing a third role -- Pegasus_Sync.md §1.
-type Session(stream: Stream, key: byte[], self: PeerInfo, document: DocumentActor) =
+///
+/// The session will not touch the document until the far side has proved who it
+/// is. Nothing is sent that could disclose a note, and nothing received is
+/// applied, until a Proof has verified against the key that arrived in Hello.
+/// That ordering is the point of the whole exchange: a peer who fails the proof
+/// must learn nothing and change nothing.
+///
+/// `trust` is supplied by the caller rather than decided here, so this type
+/// knows how to check a signature and nothing about contact lists, files or
+/// what a user should be asked. The application passes KnownPeers; the tests
+/// pass whatever they are testing.
+type Session
+    (
+        stream: Stream,
+        key: byte[],
+        self: Identity,
+        document: DocumentActor,
+        trust: PeerInfo -> byte[] -> Result<unit, string>
+    ) =
     let cts = new CancellationTokenSource()
     let peerJoined = Event<PeerInfo>()
     let presenceChanged = Event<Presence>()
@@ -110,11 +134,21 @@ type Session(stream: Stream, key: byte[], self: PeerInfo, document: DocumentActo
                 writeLock.Release() |> ignore
         }
 
+    /// Ours, sent in Challenge and expected back inside their Proof. Fresh per
+    /// session, so a proof recorded from an earlier one is no use here.
+    let nonce = Crypto.newChallenge ()
+
     let mutable updateSub: IDisposable = null
     let mutable remotePeer: PeerInfo option = None
+    let mutable remoteKey: byte[] option = None
+    let mutable proven = false
 
     /// Retained, because Hello arrives once and a late subscriber would miss it.
     member _.RemotePeer = remotePeer
+
+    /// False until the far side has signed our challenge. Nothing about the
+    /// document should be believed or disclosed while this is false.
+    member _.Proven = proven
 
     member _.PeerJoined = peerJoined.Publish
     member _.PresenceChanged = presenceChanged.Publish
@@ -126,37 +160,73 @@ type Session(stream: Stream, key: byte[], self: PeerInfo, document: DocumentActo
     member this.SendPresence(caret, anchor) =
         send (
             Awareness
-                { Peer = self
+                { Peer = self.Peer
                   Caret = caret
                   Anchor = anchor }
         )
 
-    /// Greets, offers our state vector, then pumps frames until the peer goes.
+    /// Greets, proves, and only then pumps document frames until the peer goes.
     member this.RunAsync() =
         task {
             try
-                // Local edits go out as they happen; remote ones never echo back.
-                // Never block here -- this fires on the document's mailbox thread.
-                updateSub <-
-                    document.LocalUpdate.Subscribe(fun update ->
-                        let sending = send (Update update)
-
-                        sending.ContinueWith(
-                            (fun (t: Threading.Tasks.Task) -> faulted.Trigger t.Exception),
-                            Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted
-                        )
-                        |> ignore)
-
-                do! send (Hello self)
-                do! send (SyncStep1 document.StateVector)
+                do! send (Hello(self.Peer, self.PublicKey, Version.Protocol))
+                do! send (Challenge nonce)
 
                 while not cts.IsCancellationRequested do
                     let! frame = Framing.readFrame stream key cts.Token
 
                     match frame with
-                    | Hello peer ->
-                        remotePeer <- Some peer
-                        peerJoined.Trigger peer
+                    | Hello(peer, publicKey, protocol) ->
+                        // Said in the first frame rather than discovered as a
+                        // decode failure three frames later. Protocol 1 did not
+                        // carry this at all, which is what made a mismatch
+                        // between two builds so confusing to diagnose.
+                        if protocol <> Version.Protocol then
+                            raise (ProtocolError $"peer speaks protocol {protocol}, this build speaks {Version.Protocol}")
+
+                        match trust peer publicKey with
+                        | Error why -> raise (ProtocolError why)
+                        | Ok() ->
+                            remotePeer <- Some peer
+                            remoteKey <- Some publicKey
+
+                    | Challenge theirs ->
+                        // Answered without waiting for anything: signing costs
+                        // us nothing and discloses nothing.
+                        do! send (Proof(Attestation.prove self theirs))
+
+                    | Proof signature ->
+                        match remotePeer, remoteKey with
+                        | Some peer, Some publicKey ->
+                            match Attestation.verify publicKey peer.Id nonce signature with
+                            | Error why -> raise (ProtocolError why)
+                            | Ok() ->
+                                proven <- true
+
+                                // Local edits start flowing only now. Subscribing
+                                // at construction would have sent this peer our
+                                // typing before it had proved anything.
+                                // Never block here -- this fires on the
+                                // document's mailbox thread.
+                                updateSub <-
+                                    document.LocalUpdate.Subscribe(fun update ->
+                                        let sending = send (Update update)
+
+                                        sending.ContinueWith(
+                                            (fun (t: Threading.Tasks.Task) -> faulted.Trigger t.Exception),
+                                            Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted
+                                        )
+                                        |> ignore)
+
+                                peerJoined.Trigger peer
+                                do! send (SyncStep1 document.StateVector)
+                        | _ -> raise (ProtocolError "proof arrived before the hello it belongs to")
+
+                    // Everything below moves or reveals document state, so none
+                    // of it is entertained from an unproven peer.
+                    | _ when not proven ->
+                        raise (ProtocolError "peer sent document traffic before proving its identity")
+
                     | SyncStep1 stateVector ->
                         // Answer with exactly what they lack.
                         do! send (SyncStep2(document.DiffSince stateVector))
@@ -181,7 +251,7 @@ type Session(stream: Stream, key: byte[], self: PeerInfo, document: DocumentActo
             stream.Dispose()
 
 /// Accepts one joiner on a TCP port.
-type Host(port: int, joinCode: string, self: PeerInfo, document: DocumentActor) =
+type Host(port: int, joinCode: string, self: Identity, document: DocumentActor, trust: PeerInfo -> byte[] -> Result<unit, string>) =
     let key = Crypto.deriveKey joinCode
     let listener = new TcpListener(IPAddress.Any, port)
 
@@ -196,7 +266,7 @@ type Host(port: int, joinCode: string, self: PeerInfo, document: DocumentActor) 
             client.NoDelay <- true
             let stream = client.GetStream()
             do! Handshake.asHost stream key ct
-            return new Session(stream, key, self, document)
+            return new Session(stream, key, self, document, trust)
         }
 
     interface IDisposable with
@@ -205,7 +275,15 @@ type Host(port: int, joinCode: string, self: PeerInfo, document: DocumentActor) 
 /// Connects to a host.
 module Client =
 
-    let connectAsync (host: string) (port: int) (joinCode: string) (self: PeerInfo) (document: DocumentActor) (ct: CancellationToken) =
+    let connectAsync
+        (host: string)
+        (port: int)
+        (joinCode: string)
+        (self: Identity)
+        (document: DocumentActor)
+        (trust: PeerInfo -> byte[] -> Result<unit, string>)
+        (ct: CancellationToken)
+        =
         task {
             let key = Crypto.deriveKey joinCode
             let client = new TcpClient()
@@ -213,5 +291,5 @@ module Client =
             client.NoDelay <- true
             let stream = client.GetStream()
             do! Handshake.asJoiner stream key ct
-            return new Session(stream, key, self, document)
+            return new Session(stream, key, self, document, trust)
         }

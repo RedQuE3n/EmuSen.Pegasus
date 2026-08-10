@@ -1,6 +1,8 @@
 module EmuSen.Pegasus.Tests.NetTests
 
 open System
+open System.IO
+open System.Net
 open System.Threading
 open System.Threading.Tasks
 open Xunit
@@ -23,15 +25,15 @@ type private Pair() =
     let code = Crypto.newJoinCode ()
     let alice = new DocumentActor()
     let bob = new DocumentActor()
-    let aliceInfo = Peers.named "alice"
-    let bobInfo = Peers.named "bob"
-    let host = new Host(0, code, aliceInfo, alice)
+    let aliceInfo = Peers.identity "alice"
+    let bobInfo = Peers.identity "bob"
+    let host = new Host(0, code, aliceInfo, alice, Peers.acceptAny)
     do host.Start()
 
     let accepted = host.AcceptAsync CancellationToken.None
 
     let joiner =
-        (Client.connectAsync "127.0.0.1" host.Port code bobInfo bob CancellationToken.None)
+        (Client.connectAsync "127.0.0.1" host.Port code bobInfo bob Peers.acceptAny CancellationToken.None)
             .GetAwaiter()
             .GetResult()
 
@@ -54,6 +56,8 @@ type private Pair() =
             Task.WaitAll([| hostRun :> Task; joinerRun :> Task |], 2000) |> ignore
             (alice :> IDisposable).Dispose()
             (bob :> IDisposable).Dispose()
+            (aliceInfo :> IDisposable).Dispose()
+            (bobInfo :> IDisposable).Dispose()
 
 [<Fact>]
 let ``an edit on one peer reaches the other`` () =
@@ -78,12 +82,13 @@ let ``a peer that connects late receives the existing document`` () =
     alice.Insert(0, "written before bob arrived")
     use bob = new DocumentActor()
 
-    use host = new Host(0, code, Peers.named "alice", alice)
+    use aliceId = Peers.identity "alice"
+    use host = new Host(0, code, aliceId, alice, Peers.acceptAny)
     host.Start()
     let accepted = host.AcceptAsync CancellationToken.None
 
     use joiner =
-        (Client.connectAsync "127.0.0.1" host.Port code (Peers.named "bob") bob CancellationToken.None)
+        (Client.connectAsync "127.0.0.1" host.Port code (Peers.identity "bob") bob Peers.acceptAny CancellationToken.None)
             .GetAwaiter()
             .GetResult()
 
@@ -133,12 +138,13 @@ let ``the peers exchange identities on connect`` () =
 let ``a wrong join code is refused at the handshake`` () =
     use alice = new DocumentActor()
     use bob = new DocumentActor()
-    use host = new Host(0, "7-lantern-quartz", Peers.named "alice", alice)
+    use aliceId = Peers.identity "alice"
+    use host = new Host(0, "7-lantern-quartz", aliceId, alice, Peers.acceptAny)
     host.Start()
     let accepted = host.AcceptAsync CancellationToken.None
 
     let connecting =
-        Client.connectAsync "127.0.0.1" host.Port "7-lantern-cobalt" (Peers.named "bob") bob CancellationToken.None
+        Client.connectAsync "127.0.0.1" host.Port "7-lantern-cobalt" (Peers.identity "bob") bob Peers.acceptAny CancellationToken.None
 
     // The joiner answers the challenge wrongly, so the host rejects it. The
     // joiner itself cannot tell yet -- it learns when the stream closes.
@@ -154,3 +160,89 @@ let ``a wrong join code is refused at the handshake`` () =
         (connecting.GetAwaiter().GetResult() :> IDisposable).Dispose()
     with _ ->
         ()
+
+// ---------------------------------------------------------------------------
+// Identity over a real socket
+// ---------------------------------------------------------------------------
+
+[<Fact>]
+let ``both peers prove who they are before either syncs`` () =
+    use pair = new Pair()
+    Assert.True(waitFor 5000 (fun () -> pair.HostSession.Proven && pair.JoinerSession.Proven))
+
+[<Fact>]
+let ``a peer whose key is not the pinned one is refused`` () =
+    // End to end, over a socket, with the join code correct. This is the case
+    // Pegasus_Identity.md §2 said could not be caught: somebody who was in the
+    // room when the code was read aloud, connecting as your peer.
+    use alice = new DocumentActor()
+    use bob = new DocumentActor()
+    use aliceId = Peers.identity "alice"
+    use impostor = Identity.Generate(Handle.Parse "bob")
+
+    // Alice already knows a different key for "bob".
+    let root = Path.Combine(Path.GetTempPath(), "pegasus-net", Guid.NewGuid().ToString "N")
+    Directory.CreateDirectory root |> ignore
+    use realBob = Peers.identity "bob"
+    KnownPeers.trust root (Handle.Parse "alice") realBob.Peer realBob.PublicKey |> ignore
+
+    let code = Crypto.newJoinCode ()
+    use host = new Host(0, code, aliceId, alice, Controller.pinnedTrust root (Handle.Parse "alice"))
+    host.Start()
+    let accepted = host.AcceptAsync CancellationToken.None
+
+    use joiner =
+        (Client.connectAsync "127.0.0.1" host.Port code impostor bob Peers.acceptAny CancellationToken.None)
+            .GetAwaiter()
+            .GetResult()
+
+    use hostSession = accepted.GetAwaiter().GetResult()
+    let faults = ResizeArray<exn>()
+    hostSession.Faulted.Add faults.Add
+    hostSession.RunAsync() |> ignore
+    joiner.RunAsync() |> ignore
+
+    Assert.True(waitFor 5000 (fun () -> faults.Count > 0), "the impostor was not refused")
+    Assert.False(hostSession.Proven)
+    Assert.Contains("pinned", faults[0].Message)
+
+[<Fact>]
+let ``document traffic sent before a proof is refused and changes nothing`` () =
+    // Drives the wire directly rather than through a Session, because a Session
+    // cannot be made to misbehave this way -- which is the point. A hostile
+    // client with the join code can send whatever it likes in whatever order.
+    use alice = new DocumentActor()
+    use aliceId = Peers.identity "alice"
+    alice.Insert(0, "alice's private note")
+
+    let code = Crypto.newJoinCode ()
+    let key = Crypto.deriveKey code
+    use host = new Host(0, code, aliceId, alice, Peers.acceptAny)
+    host.Start()
+    let accepted = host.AcceptAsync CancellationToken.None
+
+    // A donor document, only so there is a well-formed update to inject.
+    use donor = new DocumentActor()
+    donor.Insert(0, "INJECTED")
+    let injection = donor.DiffSince (new DocumentActor()).StateVector
+
+    let rogue =
+        task {
+            let client = new Sockets.TcpClient()
+            do! client.ConnectAsync("127.0.0.1", host.Port)
+            let stream = client.GetStream()
+            do! Handshake.asJoiner stream key CancellationToken.None
+            // No Hello, no Proof. Straight to the document.
+            do! Framing.writeFrame stream key (Update injection) CancellationToken.None
+            return client
+        }
+
+    use hostSession = accepted.GetAwaiter().GetResult()
+    let faults = ResizeArray<exn>()
+    hostSession.Faulted.Add faults.Add
+    hostSession.RunAsync() |> ignore
+
+    Assert.True(waitFor 5000 (fun () -> faults.Count > 0), "unproven document traffic was accepted")
+    Assert.Contains("proving its identity", faults[0].Message)
+    Assert.DoesNotContain("INJECTED", alice.Text)
+    (rogue.GetAwaiter().GetResult() :> IDisposable).Dispose()

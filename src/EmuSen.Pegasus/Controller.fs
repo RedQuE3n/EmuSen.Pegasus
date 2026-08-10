@@ -43,15 +43,36 @@ let defaultWorkspaceRoot =
     else
         current
 
+/// The rule the application connects under: write down a peer's key the first
+/// time, and refuse a different key for that handle afterwards.
+///
+/// Built here rather than inside Session, so that the session knows how to
+/// check a signature and nothing about where contacts are filed. The message is
+/// written for somebody who has to decide what to do about it, since the honest
+/// answer to a changed key is either "they reinstalled" or "this is not them"
+/// and only a person can tell which.
+let pinnedTrust (identityRoot: string) (local: Handle) =
+    fun (peer: PeerInfo) (publicKey: byte[]) ->
+        match KnownPeers.trust identityRoot local peer publicKey with
+        | FirstSight
+        | Recognised -> Ok()
+        | Impostor(pinned, offered) ->
+            Error(
+                $"{peer.Handle.Value} is presenting key {offered.Value}, but {pinned.Value} was pinned "
+                + "for that handle. Either they have a new identity file, or this is not them."
+            )
+
 /// Owns the workspace, the open note and the session, so the view stays a
 /// function of state. Compaction threshold and projection policy live here.
 ///
-/// Takes the PeerInfo it should present rather than an Identity or a path to
-/// one. Nothing in here needs to know how a keypair is stored, or that keypairs
-/// exist at all -- it needs a name and a colour to put on the wire. That keeps
-/// the identity format free to change without touching this file, and it is why
-/// the tests can build a Notepad without going near a password.
-type Notepad(root: string, self: PeerInfo) =
+/// Takes the unlocked Identity rather than the PeerInfo it used to, because a
+/// session now has to SIGN a challenge and a name and a colour cannot do that.
+/// This is a real narrowing of an earlier decision, which was that nothing here
+/// should know keypairs exist; proving who you are needs the key, and there is
+/// no arrangement in which the thing that owns the session does not reach it.
+/// The identity FORMAT is still none of this file's business -- IdentityStore
+/// keeps that -- and `trust` is a parameter for the same reason.
+type Notepad(root: string, self: Identity, trust: PeerInfo -> byte[] -> Result<unit, string>) =
     let workspace = new Workspace(root)
 
     let changed = Event<unit>()
@@ -85,7 +106,7 @@ type Notepad(root: string, self: PeerInfo) =
 
         openNote <- None
 
-    member _.Self = self
+    member _.Self = self.Peer
     member _.Workspace = workspace
     member _.Changed = changed.Publish
     member _.ConnectionChanged = stateChanged.Publish
@@ -148,7 +169,7 @@ type Notepad(root: string, self: PeerInfo) =
         this.Disconnect()
         cts <- new CancellationTokenSource()
         let code = Crypto.newJoinCode ()
-        let h = new Host(defaultArg port 0, code, self, doc)
+        let h = new Host(defaultArg port 0, code, self, doc, trust)
         h.Start()
         host <- Some h
         setState (Waiting(code, h.Port))
@@ -176,7 +197,7 @@ type Notepad(root: string, self: PeerInfo) =
 
         task {
             try
-                let! s = Client.connectAsync address port code self doc cts.Token
+                let! s = Client.connectAsync address port code self doc trust cts.Token
 
                 // Set Linking BEFORE Attach, not after. Attach starts the frame
                 // pump, and the peer's Hello can arrive and set Connected before

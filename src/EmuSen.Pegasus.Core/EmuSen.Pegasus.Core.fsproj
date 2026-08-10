@@ -53,6 +53,7 @@
     <Compile Include="Codec.fs" />
     <Compile Include="Crypto.fs" />
     <Compile Include="Identity.fs" />
+    <Compile Include="Attestation.fs" />
   </ItemGroup>
 
 </Project>
