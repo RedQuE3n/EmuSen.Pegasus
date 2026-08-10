@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The vocabulary two Pegasus programs have to agree on: the wire types, the
+       frame encoding, the sealed envelope, and identity keys.
+
+       This exists because EmuSen.Chariot, the server, has to speak the same
+       protocol as the desktop application, and the alternative was two
+       implementations of a frame format kept in step by hand.
+
+       docs/Pegasus_Design.md §7 collapsed Pegasus to one assembly on the rule
+       that a project boundary has to buy somebody separability they are
+       actually using. Chariot is that somebody, so this satisfies the rule
+       rather than breaking it, and docs/Pegasus_Design.md §7 was rewritten when
+       this landed rather than left contradicting the tree.
+
+       DEPENDENCIES: none, deliberately, and a test asserts it. No YDotNet,
+       because nothing here merges a document — Chariot is a router and a
+       mailbox: Chariot_Design.md §4, in the EmuSen.Chariot repository. No Avalonia, because a server
+       has no window. Anything added here is carried by every consumer, so a
+       PackageReference in this file is a decision about Chariot too. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>EmuSen.Pegasus.Core</AssemblyName>
+    <RootNamespace>EmuSen.Pegasus</RootNamespace>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Packed for Chariot, which lives in another repository and consumes this
+         through local-packages/ until it is on GitHub Packages — the same
+         arrangement EmuSen.LunaP already arrives by. In this repository the
+         application takes a ProjectReference instead, so there is no packing
+         step between editing a frame and running the tests. -->
+    <IsPackable>true</IsPackable>
+    <PackageId>EmuSen.Pegasus.Core</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Tristan Pelland</Authors>
+    <Description>Wire types, frame codec, sealed envelope and identity keys shared by Pegasus and Chariot.</Description>
+    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Identity.OfPrivateKey and ExportPrivateKey are internal because nothing
+         outside the identity file's own read and write path has business with a
+         private key. The store lives in the application and the guard asserting
+         the key never reaches disk unsealed lives in the tests, so both need to
+         see in. Chariot deliberately gets neither: it verifies signatures. -->
+    <InternalsVisibleTo Include="EmuSen.Pegasus" />
+    <InternalsVisibleTo Include="EmuSen.Pegasus.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Types.fs" />
+    <Compile Include="Codec.fs" />
+    <Compile Include="Crypto.fs" />
+    <Compile Include="Identity.fs" />
+  </ItemGroup>
+
+</Project>

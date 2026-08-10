@@ -73,13 +73,17 @@ Three habits this project keeps and should keep:
 
 ## Structure
 
-    src/EmuSen.Pegasus/        one assembly, on purpose — Design §7
-    tests/EmuSen.Pegasus.Tests/  headless: unit, property, socket, UI
+    src/EmuSen.Pegasus.Core/   shared with Chariot: Types, Codec, Crypto, Identity
+    src/EmuSen.Pegasus/        the desktop application
+    tests/EmuSen.Pegasus.Tests/  headless: unit, property, socket, UI, startup
     docs/                      the man pages
     local-packages/            folder feed for the EmuSen toolkit packages
 
-One assembly is a recorded decision (`Design §7`), not an invitation to a
-single large file. Within it:
+Two assemblies, and the split is a recorded decision (`Design §7`), not an
+invitation to make more. **Nothing goes in the core that a headless server would
+not want**: no Avalonia, no YDotNet, nothing of EmuSen. A test enforces it, and
+a `PackageReference` added there is a decision about Chariot too. Within the
+application:
 
 - **Small, sensible files with one responsibility each.** `Codec` frames,
   `Crypto` envelopes, `Store` persists, `Session` transports, `Controller`
@@ -94,8 +98,10 @@ single large file. Within it:
 ## Reusable, agnostic code
 
 The project already has a test asserting Pegasus references no EmuSen package
-but the toolkit, and one asserting every control is actually templated. Both
-were made to fail on purpose before being trusted (`Design §11`). Hold that bar:
+but the toolkit and its own core, one asserting the core carries nothing a
+headless server would refuse, and one asserting every control is actually
+templated. All were made to fail on purpose before being trusted (`Design §11`,
+`Design §7`). Hold that bar:
 
 - **Write toward the general case where it costs nothing.** A function that
   takes a stream is better than one that takes a file path; one that takes an

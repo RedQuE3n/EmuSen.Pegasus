@@ -282,29 +282,83 @@ is kept so the numbering above and below it does not shift.
 
 ---
 
-## 7. Why this is one assembly
+## 7. Why this is two assemblies, having been four and then one
 
-Pegasus arrived as four projects — core, transport, application and tests — and
-was collapsed to two.
+Pegasus arrived as four projects — core, transport, application and tests — was
+collapsed to one plus tests, and has since given exactly one boundary back. The
+rule did not change; the facts under it did, twice, and both movements are
+recorded here rather than only the latest.
 
-A project boundary has to buy somebody separability they are actually using.
-Nothing outside Pegasus consumes its document model or its transport, and no
-second frontend is planned over either. Four assemblies bought layering that only
-Pegasus itself observed, and the layering survives as file order inside one
-project: `Types` before `Codec` before `Crypto` before `Document` before `Store`
-before `Workspace` before `Session` before the UI. F#'s compilation order makes
-that ordering a compiler-enforced fact rather than a convention, which is most of
-what the separate projects were providing.
+**The rule.** A project boundary has to buy somebody separability they are
+actually using.
 
-This is the same reasoning that retired `EmuSen.Crystal` and `EmuSen.Nehellania`
-on 2026-08-05, applied before the boundary was paid for rather than after.
+**Why four became one.** Nothing outside Pegasus consumed its document model or
+its transport, and no second frontend was planned over either. Four assemblies
+bought layering that only Pegasus itself observed, and the layering survives as
+file order inside a project: `Types` before `Codec` before `Crypto` before
+`Document` before `Store` before `Workspace` before `Session` before the UI.
+F#'s compilation order makes that ordering a compiler-enforced fact rather than
+a convention, which was most of what the separate projects were providing.
+
+This was the same reasoning that retired `EmuSen.Crystal` and
+`EmuSen.Nehellania` on 2026-08-05, applied before the boundary was paid for
+rather than after.
+
+**Why one became two.** `EmuSen.Chariot` — the server, `Chariot_Design.md` —
+speaks the Pegasus frame protocol, so it needs the wire types, the codec, the
+sealed envelope and identity keys. That is the somebody the rule asks for. The
+alternative was two implementations of a frame format in two repositories kept
+in step by hand, with `Pegasus_Sync.md` §3 as the only thing holding them
+together, and the first divergence discovered as a decode failure between two
+machines rather than as a build error.
+
+So `EmuSen.Pegasus.Core` exists and holds four files:
+
+    Types      PeerId, Handle, PeerInfo, Frame, ProtocolError
+    Codec      frame encoding
+    Crypto     the sealed envelope, both KDFs, challenge and response
+    Identity   keypairs, fingerprints, signing and verification
+
+Everything else stayed in the application, and the list of what did not move is
+the useful half: `Document` and its YDotNet dependency, because Chariot never
+merges; `Store` and `Workspace`, because it holds no notes; `Session`, because
+the envelope it will need is not designed yet (`Chariot_Design.md` §5) and
+moving it before then would be guessing; `IdentityStore`, because reading a
+private key off disk is a client's job and not a server's. `Identity.fs` was
+split along exactly that line — keys in the core, the file format in the
+application.
+
+The result is that the package declares **one** dependency, `FSharp.Core`. A
+test asserts the core references nothing of Avalonia, nothing of YDotNet and
+nothing of EmuSen, because the value of the boundary is entirely in what it
+refuses to carry, and that is the assertion that will notice when it stops
+refusing.
+
+### 7.0 What this cost, exactly
+
+One test changed: `Pegasus references the toolkit and nothing else of EmuSen`
+now also permits `EmuSen.Pegasus.*`. The plan for this pass claimed all 94 tests
+would pass unchanged, and that claim was wrong — stated here rather than
+quietly adjusted. It was wrong in an instructive direction: the test was not
+defective, the fact it encoded changed, and a test that encodes a fact should be
+expected to change when the fact does. The half of it that still bites — any
+*other* `EmuSen.` assembly is still forbidden — is untouched.
+
+The other 93 passed without being edited, which is what the claim was really
+reaching for: no test needed rewriting to accommodate the split, only to record
+it.
+
+`FSharp.Core` is no longer an argument that has to be won. It was the objection
+that sank EmuSen's `F#ascent` branch, and the move to a separate repository
+settles it structurally: no EmuSen frontend and no core can link this
+executable, because it is not in that solution any more.
 
 `FSharp.Core` is no longer an argument that has to be won. It was the objection
 that sank EmuSen's `F#ascent` branch, and the move to a separate repository
 settles it structurally: no EmuSen frontend and no core can link this executable,
 because it is not in that solution any more.
 
-### 7.1 Why the toolkit arrives as a package
+### 7.1 Why the toolkit arrives as a package, and the core leaves as one
 
 Pegasus needs `EmuSen.LunaP` (§8) and LunaP must stay in EmuSen, where three
 other projects consume it. Four ways to cross that boundary were considered:
@@ -346,6 +400,17 @@ Two limitations, stated rather than discovered later:
 A licence consequence follows and is worth naming: EmuSen is GPL-3.0, so the
 packages are GPL-3.0, so Pegasus is a derivative work of them. This repository's
 licence is therefore not a free choice while §8 holds.
+
+`EmuSen.Pegasus.Core` now leaves by the same road it arrived on. Chariot is in
+another repository and cannot resolve a `ProjectReference` either, so the core
+is packable and Chariot consumes it from `local-packages/` until it is on GitHub
+Packages — the identical arrangement, and identically temporary.
+
+Inside this repository the application takes a `ProjectReference` rather than
+the package. A packing step between editing a frame and running the tests would
+be paid on every change and would buy a version number nobody in this repository
+reads. The package exists for the consumer that cannot see the source; the
+project reference exists for the one that can.
 
 ---
 

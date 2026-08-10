@@ -22,12 +22,16 @@ shared Avalonia toolkit.
 
 ## Layout
 
-    src/EmuSen.Pegasus        document replica, storage, crypto, transport, UI
+    src/EmuSen.Pegasus.Core   wire types, frame codec, sealed envelope, identity keys
+    src/EmuSen.Pegasus        document replica, storage, transport, UI
     tests/EmuSen.Pegasus.Tests  headless: unit, property, socket and UI tests
-    docs/                     the reasoning; code comments point here
+    docs/                     the reasoning; the code explains itself and cites here
 
-One assembly, on purpose. It arrived as four and `docs/Pegasus_Design.md` §7
-records why the boundaries were not worth their cost.
+Two assemblies. It arrived as four, was collapsed to one, and gave one boundary
+back when `EmuSen.Chariot` — the server — needed to speak the same wire protocol.
+`docs/Pegasus_Design.md` §7 records all three movements and the single rule
+behind them. The core declares one dependency, `FSharp.Core`, and a test keeps
+it that way.
 
 ## Building
 
@@ -74,7 +78,7 @@ switching notes while connected is not supported — disconnect first.
 
     dotnet test
 
-94 tests, all headless — no window is ever opened, including for the UI tests,
+95 tests, all headless — no window is ever opened, including for the UI tests,
 which drive a real Avalonia control tree under `Avalonia.Headless`. The suite
 covers frame and crypto round trips, torn-file recovery, compaction, caret
 arithmetic, property-based convergence under randomised interleavings, identity
@@ -84,8 +88,10 @@ the full path from one peer's mailbox to the other's rendered editor.
 
 Several of those tests are guards that were made to fail on purpose before being
 trusted: two assert every control in a window is actually templated, one asserts
-the assembly references no EmuSen package but the toolkit, and one asserts the
-private key never reaches the identity file in the clear. The last of those
+the application references no EmuSen package but the toolkit and its own core,
+one asserts the core carries neither Avalonia nor YDotNet into a server that
+wants neither, and one asserts the private key never reaches the identity file
+in the clear. The last of those
 passed against a deliberately unsealed write on its first attempt — it compared
 raw bytes to a base64 file — and `docs/Pegasus_Identity.md` §3 records the
 correction. `docs/Pegasus_Design.md` §11 explains what shipped before the first

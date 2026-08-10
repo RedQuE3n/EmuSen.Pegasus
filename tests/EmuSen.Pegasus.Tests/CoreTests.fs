@@ -433,19 +433,56 @@ let ``an adjusted caret always lands inside the new buffer`` (before: NonNull<st
 // ---------------------------------------------------------------------------
 
 [<Fact>]
-let ``Pegasus references the toolkit and nothing else of EmuSen`` () =
-    let allowed = set [ "EmuSen.LunaP" ]
+let ``Pegasus references the toolkit and its own core, and nothing else of EmuSen`` () =
+    // Amended when EmuSen.Pegasus.Core was split out for Chariot, and this is
+    // the one test in the suite that had to change for that split. It was not
+    // wrong: the fact it encodes changed. What it protects is the claim that
+    // Pegasus is a notepad on a windowing toolkit rather than a part of the
+    // emulator, and its own core is not the emulator. Anything else under
+    // EmuSen. still is not allowed, which is the half that still bites.
+    let allowed (name: string) =
+        name = "EmuSen.LunaP" || name.StartsWith("EmuSen.Pegasus", StringComparison.Ordinal)
 
     let referenced =
         typeof<DocumentActor>.Assembly.GetReferencedAssemblies()
         |> Array.map _.Name
         |> Array.filter (fun n -> n.StartsWith("EmuSen.", StringComparison.Ordinal))
-        |> Array.filter (fun n -> not (allowed.Contains n))
+        |> Array.filter (allowed >> not)
         |> Array.distinct
 
     Assert.True(
         referenced.Length = 0,
         $"""Pegasus reaches past the toolkit into: {String.Join(", ", referenced)}"""
+    )
+
+[<Fact>]
+let ``the core carries nothing a server would have to take with it`` () =
+    // This is what the split has to earn, and the only assertion that will
+    // notice if it stops earning it.
+    //
+    // Chariot consumes this assembly and is a socket server: no window, and no
+    // document, because it routes sealed payloads it cannot read rather than
+    // merging them. Avalonia would drag a windowing stack onto a headless
+    // machine and YDotNet would drag a native library for a merge that never
+    // happens. Either appearing here is inherited by every consumer, and the
+    // day one does the boundary has stopped paying for itself and Design §7
+    // needs revisiting again.
+    //
+    // Nothing of EmuSen either: the core sits underneath the toolkit, not on it.
+    let referenced =
+        typeof<Identity>.Assembly.GetReferencedAssemblies() |> Array.map _.Name
+
+    let carried =
+        referenced
+        |> Array.filter (fun n ->
+            n.StartsWith("Avalonia", StringComparison.Ordinal)
+            || n.StartsWith("YDotNet", StringComparison.Ordinal)
+            || n.StartsWith("EmuSen.", StringComparison.Ordinal))
+        |> Array.distinct
+
+    Assert.True(
+        carried.Length = 0,
+        $"""the core would make every consumer take: {String.Join(", ", carried)}"""
     )
 
 [<Fact>]
