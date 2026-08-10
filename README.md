@@ -78,11 +78,12 @@ switching notes while connected is not supported — disconnect first.
 
     dotnet test
 
-114 tests, all headless — no window is ever opened, including for the UI tests,
+125 tests, all headless — no window is ever opened, including for the UI tests,
 which drive a real Avalonia control tree under `Avalonia.Headless`. The suite
 covers frame and crypto round trips, torn-file recovery, compaction, caret
 arithmetic, property-based convergence under randomised interleavings, identity
-identities and pinned peer keys in SQLite, the mutual identity proof over a real
+identities and pinned peer keys in SQLite, the routing envelope a relay reads
+without being able to open what it carries, the mutual identity proof over a real
 loopback socket including a refused impostor, two peers over that same socket, the
 startup path from sign-in window to notepad through a real desktop lifetime, and
 the full path from one peer's mailbox to the other's rendered editor.

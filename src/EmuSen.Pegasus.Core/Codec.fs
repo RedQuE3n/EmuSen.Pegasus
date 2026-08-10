@@ -31,6 +31,12 @@ module Codec =
     [<Literal>]
     let private TagProof = 7uy
 
+    [<Literal>]
+    let private TagDirect = 0uy
+
+    [<Literal>]
+    let private TagToHandle = 1uy
+
     /// Frames are bounded so a malformed or hostile length cannot make us
     /// allocate arbitrarily; see Pegasus_Sync.md §5.
     [<Literal>]
@@ -133,6 +139,44 @@ module Codec =
         with
         | :? EndOfStreamException -> raise (ProtocolError $"truncated payload for frame tag {tag}")
         | :? ArgumentException -> raise (ProtocolError $"malformed payload for frame tag {tag}")
+
+    /// The envelope goes on the wire in the clear, ahead of the sealed payload.
+    let encodeEnvelope (envelope: Envelope) : byte[] =
+        match envelope with
+        | Direct -> [| TagDirect |]
+        | ToHandle handle ->
+            use ms = new MemoryStream()
+            use w = new BinaryWriter(ms, UTF8Encoding false, true)
+            w.Write TagToHandle
+            w.Write handle.Value
+            w.Flush()
+            ms.ToArray()
+
+    /// Returns the envelope and how many bytes it used, because the sealed
+    /// payload begins immediately after it and the caller has to find it. A
+    /// relay decodes this holding no key at all.
+    let decodeEnvelope (buffer: byte[]) : Envelope * int =
+        if buffer.Length = 0 then
+            raise (ProtocolError "empty envelope")
+
+        try
+            match buffer[0] with
+            | TagDirect -> Direct, 1
+            | TagToHandle ->
+                use ms = new MemoryStream(buffer, 1, buffer.Length - 1)
+                use r = new BinaryReader(ms, UTF8Encoding false)
+                let raw = r.ReadString()
+
+                // Validated here so a destination arriving from the wire obeys
+                // the same grammar as one typed locally, and a relay never
+                // queues under a key it could not have produced itself.
+                match Handle.TryParse raw with
+                | Ok handle -> ToHandle handle, 1 + int ms.Position
+                | Error why -> raise (ProtocolError $"envelope names an unusable handle: {why}")
+            | unknown -> raise (ProtocolError $"unknown envelope tag {unknown}")
+        with
+        | :? EndOfStreamException -> raise (ProtocolError "truncated envelope")
+        | :? ArgumentException -> raise (ProtocolError "malformed envelope")
 
 /// CRC-32 (IEEE), used by the store to detect a torn trailing record.
 module Crc32 =

@@ -73,7 +73,7 @@ Three habits this project keeps and should keep:
 
 ## Structure
 
-    src/EmuSen.Pegasus.Core/   shared with Chariot: Types, Codec, Crypto, Identity
+    src/EmuSen.Pegasus.Core/   shared with Chariot: Types, Codec, Crypto, Identity, Framing
     src/EmuSen.Pegasus/        the desktop application
     tests/EmuSen.Pegasus.Tests/  headless: unit, property, socket, UI, startup
     docs/                      the man pages

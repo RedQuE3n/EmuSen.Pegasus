@@ -233,7 +233,7 @@ let ``document traffic sent before a proof is refused and changes nothing`` () =
             let stream = client.GetStream()
             do! Handshake.asJoiner stream key CancellationToken.None
             // No Hello, no Proof. Straight to the document.
-            do! Framing.writeFrame stream key (Update injection) CancellationToken.None
+            do! Framing.writeFrame stream key Direct (Update injection) CancellationToken.None
             return client
         }
 

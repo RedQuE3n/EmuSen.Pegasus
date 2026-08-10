@@ -109,6 +109,25 @@ type Presence =
       Caret: int
       Anchor: int }
 
+/// The part of a frame an intermediary is allowed to read.
+///
+/// Everything else on the wire is sealed end to end, which is exactly the
+/// problem: a relay has to know where to send a payload and must not be able to
+/// read it. So a destination rides outside the seal, and nothing else does.
+///
+/// This LEAKS METADATA and there is no way around it. Chariot necessarily
+/// learns who is connected, who sends to whom, when, and how many bytes. It
+/// does not learn content. Anyone who needs the routing itself hidden wants an
+/// onion router, and should be told so rather than reassured.
+///
+/// Direct is what two peers on a socket use: there is no intermediary, so there
+/// is nothing to tell. A session that finds anything else on a direct
+/// connection refuses it, because being routed is not something that should
+/// happen without the relay having put it there.
+type Envelope =
+    | Direct
+    | ToHandle of Handle
+
 /// One message on the wire.
 ///
 /// Sync payloads are raw Yjs bytes, so a bridge to a y-websocket client stays a

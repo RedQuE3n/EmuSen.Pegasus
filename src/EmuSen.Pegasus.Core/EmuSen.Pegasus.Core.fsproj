@@ -54,6 +54,7 @@
     <Compile Include="Crypto.fs" />
     <Compile Include="Identity.fs" />
     <Compile Include="Attestation.fs" />
+    <Compile Include="Framing.fs" />
   </ItemGroup>
 
 </Project>

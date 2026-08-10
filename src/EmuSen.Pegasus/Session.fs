@@ -1,55 +1,11 @@
 namespace EmuSen.Pegasus
 
 open System
-open System.Buffers.Binary
 open System.IO
 open System.Net
 open System.Net.Sockets
 open System.Threading
 open EmuSen.Pegasus
-
-/// Length-prefixed sealed frames over a stream. Wire layout in
-/// Pegasus_Sync.md §3.
-module Framing =
-
-    let private readExactly (stream: Stream) (count: int) (ct: CancellationToken) =
-        task {
-            let buffer = Array.zeroCreate<byte> count
-            let mutable read = 0
-
-            while read < count do
-                let! n = stream.ReadAsync(Memory(buffer, read, count - read), ct)
-
-                if n = 0 then
-                    raise (EndOfStreamException "peer closed the connection")
-
-                read <- read + n
-
-            return buffer
-        }
-
-    let writeFrame (stream: Stream) (key: byte[]) (frame: Frame) (ct: CancellationToken) =
-        task {
-            let sealedBytes = Crypto.seal key (Codec.encode frame)
-            let prefix = Array.zeroCreate<byte> 4
-            BinaryPrimitives.WriteInt32LittleEndian(Span prefix, sealedBytes.Length)
-            do! stream.WriteAsync(ReadOnlyMemory prefix, ct)
-            do! stream.WriteAsync(ReadOnlyMemory sealedBytes, ct)
-            do! stream.FlushAsync ct
-        }
-
-    let readFrame (stream: Stream) (key: byte[]) (ct: CancellationToken) =
-        task {
-            let! prefix = readExactly stream 4 ct
-            let length = BinaryPrimitives.ReadInt32LittleEndian(ReadOnlySpan prefix)
-
-            // Checked before allocating, so a hostile length cannot exhaust memory.
-            if length <= 0 || length > Codec.MaxFrameBytes then
-                raise (ProtocolError $"frame length {length} is out of range")
-
-            let! sealedBytes = readExactly stream length ct
-            return Codec.decode (Crypto.openSealed key sealedBytes)
-        }
 
 /// Proves both ends derived the same key from the join code, without sending it.
 ///
@@ -129,7 +85,7 @@ type Session
             do! writeLock.WaitAsync cts.Token
 
             try
-                do! Framing.writeFrame stream key frame cts.Token
+                do! Framing.writeFrame stream key Direct frame cts.Token
             finally
                 writeLock.Release() |> ignore
         }
@@ -173,7 +129,13 @@ type Session
                 do! send (Challenge nonce)
 
                 while not cts.IsCancellationRequested do
-                    let! frame = Framing.readFrame stream key cts.Token
+                    let! envelope, frame = Framing.readFrame stream key cts.Token
+
+                    // Nothing put this connection behind a relay, so nothing
+                    // should be arriving addressed. A routed frame here means
+                    // either a confused intermediary or somebody probing.
+                    if envelope <> Direct then
+                        raise (ProtocolError "a routed frame arrived on a direct connection")
 
                     match frame with
                     | Hello(peer, publicKey, protocol) ->

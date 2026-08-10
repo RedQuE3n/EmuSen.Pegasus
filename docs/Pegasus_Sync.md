@@ -7,9 +7,24 @@ nothing else — it is not a client/server split, and the host is not authoritat
 Both sides hold a complete replica and both persist it (`Pegasus_Format.md`), so
 the host disappearing costs the joiner nothing but liveness.
 
-An always-on relay is deferred, not rejected. The session abstraction is shaped so
-that a relay is simply a peer that never disconnects; adding one should not
-require the protocol to learn a new role.
+An always-on relay is deferred, not rejected.
+
+**A correction.** This section used to say the session abstraction was shaped so
+that "a relay is simply a peer that never disconnects", and that adding one
+"should not require the protocol to learn a new role". That was wrong, and the
+reason is worth keeping because it is not obvious.
+
+Merging a Yjs update requires the plaintext of that update. So a relay that
+holds a replica — a peer — must be able to decrypt everything both parties
+write, and the end-to-end property would be gone. Keeping the sealing means the
+relay cannot merge, which means it is **not a peer**: it is a router and a
+mailbox. `EmuSen.Chariot` is built on that footing, and `Chariot_Design.md` §4
+is the long version.
+
+The protocol did have to learn something new, and §3 now carries it: a
+destination outside the seal, because a frame sealed end to end leaves an
+intermediary nothing it can read. That is one envelope byte on a direct
+connection and the prediction was still wrong.
 
 The host accepts exactly one joiner. `Host.AcceptAsync` is awaited once, so a
 session is a pair and not a group. This is a property of the current shell rather
@@ -42,23 +57,63 @@ recommends a tunnel instead.
 
 A frame is a tag byte followed by a payload:
 
-    0  Hello       peer id, handle, colour  (length-prefixed UTF-8 strings)
+    0  Hello       protocol byte, peer id, handle, colour, then the
+                   sender's public key, int32-length-prefixed
     1  SyncStep1   raw Yjs state vector
     2  SyncStep2   raw Yjs update answering a state vector
     3  Update      raw Yjs update
     4  Awareness   peer, then caret and anchor as int32
     5  Bye         no payload
+    6  Challenge   a random nonce
+    7  Proof       a signature over the other side's nonce
 
 Strings use `BinaryWriter`'s 7-bit-encoded length prefix. Multi-byte integers are
 little endian.
 
+Tags 6 and 7 are the identity exchange; `Pegasus_Identity.md` §2 covers what a
+proof does and does not establish. `Hello` carries the protocol version so a
+build mismatch is stated in the first frame rather than discovered as a decode
+failure further down.
+
+### 3.1 The envelope
+
+A whole frame is sealed, which leaves an intermediary nothing to read, and a
+relay has to know where a payload is going. So the wire is:
+
+    int32   length of everything that follows
+    bytes   envelope, IN THE CLEAR
+    bytes   sealed payload
+
+with two envelopes:
+
+    0  Direct           no intermediary; nothing to say
+    1  ToHandle         a destination handle, 7-bit-length-prefixed UTF-8
+
+Two peers on a socket always send `Direct`, and a session refuses anything else,
+because nothing put a plain connection behind a relay. When Chariot delivers, it
+rewrites the destination to `Direct`: the recipient *is* the destination, so
+there is nothing left to route.
+
+**This leaks metadata and there is no way around it.** A relay necessarily
+learns who is connected, who sends to whom, when, and how many bytes. It does
+not learn content, and a test pins exactly that: a reader holding no key gets
+the destination and a payload it cannot open with a wrong code or a zero key.
+Anyone who needs the routing itself hidden wants an onion router, not this.
+
+A channel identifier derived from the join code was considered instead of a
+handle, so a relay would route without learning who talks to whom. It is not
+obviously worth it — presence already requires Chariot to know handles and
+connections, so the handle is known anyway — and it is recorded in
+`Chariot_Design.md` §5 so it is not re-proposed without a better argument.
+
 The peer id is a fingerprint of the sender's public key and the handle is the
 name they signed in under, both described in `Pegasus_Identity.md` §6 and §1.
-Neither is proven: nothing in this exchange demonstrates that the sender holds
-the key the fingerprint names. `Pegasus_Identity.md` §2 states that plainly and
-is the section to read before trusting a displayed handle.
+An earlier version of this paragraph said neither was proven, and that is no
+longer true: §4 now carries a challenge and a proof, and the id must be the
+fingerprint of the key that arrives beside it.
 
-On the wire each frame is sealed (§5) and then length-prefixed with an int32.
+On the wire each frame is sealed (§5), preceded by its envelope (§3.1), and the
+pair length-prefixed with an int32.
 
 The encoding is bespoke rather than JSON because `System.Text.Json` cannot
 serialise F# unions and `PeerId` is one; the full account is in
@@ -68,9 +123,20 @@ boundary rather than a change to the document model.
 
 ## 4. Exchange
 
-On connect, each side sends `Hello`, then `SyncStep1` carrying its state vector.
+On connect, each side sends `Hello` — carrying its public key — and a
+`Challenge` holding a fresh random nonce. Each signs the nonce the other sent
+and replies with `Proof`.
+
+**Only after a proof verifies** does a peer send `SyncStep1` carrying its state
+vector, subscribe to local edits, or accept anything that touches the document.
 On receiving `SyncStep1`, a peer replies with `SyncStep2` containing exactly the
 operations the other lacks. Thereafter each local edit is broadcast as `Update`.
+
+The ordering is the point rather than an implementation detail: a peer that
+fails the proof must learn nothing and change nothing, so nothing about the
+document may be sent or applied before it passes. Document traffic arriving
+early is refused, and a test drives exactly that with a client that skips the
+exchange.
 
 Because the payloads are Yjs updates, the exchange is idempotent and
 order-independent: a duplicated or late `Update` merges to the same document. The
