@@ -409,10 +409,14 @@ this cost a consumer a core" as the question being asked.
 
 Two limitations, stated rather than discovered later:
 
-- The package feed is currently a folder, `local-packages/`, that `NuGet.config`
-  resolves relative to itself. It is populated by `dotnet pack` in a checkout of
-  the LunaP repository. A real feed is the intended destination and the reason
-  this is a folder today is only that the package has not been pushed to one.
+- ~~The package feed is currently a folder~~ — **resolved.** `EmuSen.LunaP` is on
+  nuget.org, published from a tag by a workflow that holds no credential at all:
+  NuGet Trusted Publishing exchanges a GitHub OIDC token, proving which
+  repository and which workflow file is running, for a key that lives minutes.
+  `NuGet.config` here is now `<clear />` plus nuget.org, and a bare clone of this
+  repository builds with `dotnet build` and nothing else. This limitation stood
+  for the whole of the toolkit's life outside EmuSen and is the last thing the
+  split was waiting on.
 - Every package involved is stamped `0.1.0` and stays there. NuGet caches by id
   and version, so repacking after a change does not propagate and a build fails
   on code that was just written as though it did not exist. The workaround is to

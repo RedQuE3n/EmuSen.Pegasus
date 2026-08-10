@@ -35,21 +35,19 @@ it that way.
 
 ## Building
 
-Pegasus depends on [`EmuSen.LunaP`](https://github.com/RedQuE3n/EmuSen.LunaP),
-a small Avalonia toolkit, consumed here as a NuGet package. Until it is on a
-real feed, `NuGet.config` points at `local-packages/`, a folder feed you populate
-from a checkout of that repository:
-
-    dotnet pack src/EmuSen.LunaP/EmuSen.LunaP.csproj -c Release -o <path>/Pegasus/local-packages
-
-That is one package, and it used to be three carried out of the emulator project:
-LunaP declared `EmuSen.Galaxia` and `EmuSen.Cauldron` as hard dependencies, so
-both had to come too. It has its own repository now and declares Avalonia and
-nothing else — `docs/Pegasus_Design.md` §7.1.
-
-Then:
-
     dotnet build
+
+That is the whole of it. Pegasus depends on
+[`EmuSen.LunaP`](https://github.com/RedQuE3n/EmuSen.LunaP), a small Avalonia
+toolkit, and it comes from nuget.org like anything else.
+
+It has not always been that simple, and the history is short enough to be worth
+knowing. The toolkit lived inside an emulator project and had to be hand-packed
+into a folder feed here, along with the two EmuSen assemblies it declared as
+hard dependencies — three packages, none of them on a real feed, and a build
+that failed for anyone who had not cloned the emulator first. The toolkit
+stopped naming anything of EmuSen's, moved to its own repository, and is
+published from a tag. `docs/Pegasus_Design.md` §7.1 records all of it.
 
 `docs/Pegasus_Design.md` §7.1 records why this is a package rather than a
 submodule or a vendored copy, and what the arrangement does not cover.
