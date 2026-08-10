@@ -65,8 +65,17 @@ let showsText (window: Window) (text: string) =
         | :? TextBlock as t -> t.Text = text
         | _ -> false)
 
-/// Names every control that would render nothing. Measure and arrange first,
-/// because a template is applied on the way to being laid out.
+/// Names every control in the window that would render nothing.
+///
+/// Measure and arrange first: a template is applied on the way to being laid
+/// out, so a window that has only been shown has not necessarily got any yet,
+/// and asserting before laying out would fail on controls that are perfectly
+/// fine.
+///
+/// This is the shape of the guard that caught the blank window -- a headless
+/// test that walks the logical tree proves the tree exists, not that anything
+/// is drawn. If what can break is whether anything appears at all, the
+/// assertion has to be about templates. Pegasus_Design.md §11 is the incident.
 let untemplatedIn (window: Window) =
     window.Measure(Size(1000.0, 680.0))
     window.Arrange(Rect(0.0, 0.0, 1000.0, 680.0))
@@ -80,8 +89,12 @@ let untemplatedIn (window: Window) =
     |> Seq.distinct
     |> Seq.toArray
 
-/// Waits on a condition rather than sleeping a fixed time, pumping the
-/// dispatcher so posted work runs. See Pegasus_Design.md §5.
+/// Waits for a condition, pumping the dispatcher so posted work actually runs.
+///
+/// Waiting on the condition rather than sleeping a fixed time is what keeps the
+/// suite from being timing-fragile on a loaded machine: a fixed sleep is either
+/// too short sometimes or too slow always. RunJobs is needed because nothing
+/// here starts a message loop, so posted continuations only run when asked.
 let pump (predicate: unit -> bool) =
     let deadline = DateTime.UtcNow.AddSeconds 5.0
 
@@ -92,10 +105,16 @@ let pump (predicate: unit -> bool) =
     Dispatcher.UIThread.RunJobs()
     predicate ()
 
-/// Avalonia's dispatcher belongs to the thread that set the platform up, for
-/// the life of the process. Every test that touches a window therefore joins
-/// this collection and they run in sequence rather than across xunit's pool.
-/// See Pegasus_Design.md §12.
+/// Every test class that touches a window joins this collection.
+///
+/// xunit parallelises across test classes. Avalonia's dispatcher belongs to the
+/// thread that set the platform up, for the life of the process, so two UI test
+/// classes running at once fail with "the calling thread cannot access this
+/// object because a different thread owns it". A collection is xunit's way of
+/// saying these run in sequence; the non-UI tests keep their parallelism.
+///
+/// With only one UI test class this was invisible, and adding a second turned
+/// eight passing tests red immediately.
 [<Xunit.CollectionDefinition "Avalonia">]
 type AvaloniaCollection() =
     class

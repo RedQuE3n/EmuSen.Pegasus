@@ -18,52 +18,58 @@ as much as the code, and it must survive somebody reading it critically.
 `README.md` is the front door for a reader who has not opened the code. It
 summarises; it never becomes the place a decision is recorded.
 
-## Code notes go in the man pages, not the code body
+## Code explains itself
 
-**A note in the code body is one line and cites where the real note lives.**
-The reasoning, the evidence, the alternatives considered and the measurements
-all go into the appropriate man page under a numbered section. The code carries
-a pointer to it.
+**Notes go in the code, beside the thing they explain.** Write as much as the
+reader needs. A comment that takes six lines to say why something is the way it
+is, is six lines well spent — the reader is a person opening the file for the
+first time, and sending them to another document to find out why is a cost paid
+every single time the file is read.
 
-    /// Threat model in Pegasus_Sync.md §5.
-    /// Rewrites the log as one snapshot past this many records. See Pegasus_Format.md §3.
+    /// Fixed salt, and that is a real weakness. Both peers must derive the same
+    /// key from the join code alone, with no round trip in which to agree on a
+    /// random one, so the salt cannot vary. An attacker can therefore precompute
+    /// against the whole 9,216-code space; the iteration count raises the cost
+    /// of doing so without changing the shape of the problem. This is a
+    /// pre-shared key for two people on a LAN, not a security boundary.
+    /// Measured entropy and the full threat model: Pegasus_Sync.md §5.
 
-Not this — the body belongs in a `§`:
+Not this — the reader now has to go and find out what the consequences are:
 
-    /// Fixed salt: both peers must derive the same key from the code alone,
-    /// with no round trip to agree on a random one. This means a code reused
-    /// across sessions yields the same key, which is why ...
+    /// Fixed salt. Consequences in Pegasus_Sync.md §5.
 
 Rules that follow from it:
 
-- One line. If it does not fit on one line, the note is a man-page section and
-  the code gets a citation to it.
-- Cite by file and section: `Pegasus_Sync.md §3`, not "see the docs".
+- **Explain why, and what breaks if someone changes it.** The code already says
+  what it does.
+- **A `§` citation is an addition, never a substitute.** Cite the man page for
+  the long version — the measurement, the alternatives tried — *after* the
+  comment has already explained the thing on its own terms.
 - Every `§` cited from code must resolve. Adding a citation to a section that
   does not exist is a broken reference; write the section.
-- Signatures, types and names carry meaning that comments otherwise would.
-  Prefer renaming over explaining.
-- Existing multi-line blocks stay until that file is being edited anyway; then
-  collapse them and move the body into a `§`. No sweep commit.
+- **Keep them true.** A comment that has drifted from the code it sits beside is
+  worse than no comment, because it is believed.
+- Don't narrate the obvious. `// increment i` is noise; a name is better than a
+  comment where a name will do.
 
-**Before writing a new note, read the man pages** — the decision is often
-already recorded, and the right move is a citation, not a fresh paragraph.
-That also applies to reviewing earlier reasoning: `docs/` is the record, not
-the git log.
+## What still goes in the man pages
 
-## What goes into the man pages
+Everything that does not fit beside code, and is worth keeping:
 
-Decisions, evidence, and things that were tried and rejected. Two habits this
-project already keeps and should keep:
+- **Measurements**, with numbers. The 2,000-document client-id sample, the
+  bisection of the 2^32 boundary.
+- **Defects found in dependencies**, with a version and a reproduction.
+- **Alternatives tried and rejected**, and why — so they are not retried.
+- **Guards made to fail on purpose**, and what each sabotage turned red.
+- **Corrections**: what a document said, and what is actually true.
 
-- **Corrections are stated, not quietly fixed.** When a doc turns out to be
-  wrong about the code, say what it said and what is actually true.
+Three habits this project keeps and should keep:
+
+- **Corrections are stated, not quietly fixed.**
 - **Untested claims are recorded as hazards, not behaviours.** "A host accepts
   exactly one joiner" is a hazard until a test pins it.
-
-Measurements get numbers. Claims about a dependency get a version and a
-reproduction. No invented results, ever — an academic project that reports a
-test suite as passing when it was not is worse than one that reports failure.
+- No invented results, ever — an academic project that reports a test suite as
+  passing when it was not is worse than one that reports failure.
 
 ## Structure
 

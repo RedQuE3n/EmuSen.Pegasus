@@ -22,8 +22,23 @@ module Crypto =
     [<Literal>]
     let SaltBytes = 16
 
-    /// Fixed salt: both peers must derive the same key from the code alone, with
-    /// no round trip to agree on a random one. Consequences in Pegasus_Sync.md §5.
+    /// Fixed salt, and it is a real weakness rather than an oversight.
+    ///
+    /// Both peers have to arrive at the same key knowing only the join code,
+    /// and at the moment they need it they have no channel over which to agree
+    /// on a random salt -- the channel is the thing the key is for. So the salt
+    /// cannot vary, and an attacker can precompute against the entire 9,216-code
+    /// space that newJoinCode draws from. The iteration count raises the cost of
+    /// doing that; it does not change the shape of the problem.
+    ///
+    /// This is a pre-shared key for two people on a LAN or a private network,
+    /// not a security boundary. Anyone who wants the stronger property should
+    /// run Pegasus over WireGuard or Tailscale rather than expect this layer to
+    /// be more than it is. Full threat model, and what the encryption does and
+    /// does not buy, in Pegasus_Sync.md §5.
+    ///
+    /// Contrast derivePassword below, where only one machine derives the key and
+    /// the salt is therefore random.
     let private salt = Encoding.UTF8.GetBytes "pegasus/v1/join"
 
     /// Words chosen to be unambiguous when read aloud over a phone.
@@ -44,10 +59,20 @@ module Crypto =
 
     let newSalt () = RandomNumberGenerator.GetBytes SaltBytes
 
-    /// Same KDF as the join code, with a random salt instead of a fixed one --
-    /// only one machine derives this key, so nothing forces the weakness. The
-    /// iteration count is a parameter because the file records the one it was
-    /// written with. See Pegasus_Identity.md §4.
+    /// Derives a key from a password, for sealing an identity file.
+    ///
+    /// Same KDF as deriveKey above, with the one difference that matters: the
+    /// salt is passed in and is random per identity, where the join code's is
+    /// fixed. That is not an inconsistency between the two. A join code must
+    /// produce the same key on two machines that have not spoken yet, so there
+    /// is no opportunity to agree on a random salt and the weakness is forced.
+    /// A password is only ever derived on the machine that stores the file, so
+    /// the salt can be random, is stored beside the ciphertext, and
+    /// precomputation is off the table.
+    ///
+    /// The iteration count is a parameter rather than the constant because the
+    /// identity file records the count it was written with. Raising Iterations
+    /// later must not lock anyone out of a file written under the old one.
     let derivePassword (password: string) (salt: byte[]) (iterations: int) =
         Rfc2898DeriveBytes.Pbkdf2(Encoding.UTF8.GetBytes password, salt, iterations, HashAlgorithmName.SHA256, KeyBytes)
 
@@ -61,9 +86,14 @@ module Crypto =
         aes.Encrypt(nonce, plaintext, cipher, tag)
         Array.concat [ nonce; cipher; tag ]
 
-    /// None on a wrong key, a truncated envelope or a tampered one. Callers that
-    /// want to say "wrong password" rather than "wrong join code" use this and
-    /// name their own failure -- Pegasus_Identity.md §4.
+    /// Opens a sealed blob, or None.
+    ///
+    /// None covers a wrong key, a truncated envelope and a tampered one alike:
+    /// GCM cannot tell you which, only that the tag did not verify, and it would
+    /// be a lie to pretend otherwise. Callers name their own failure -- the
+    /// session says "wrong join code", the identity store says "wrong password"
+    /// -- which is the whole reason this exists separately from openSealed
+    /// below, whose message would be nonsense on the identity path.
     let tryOpenSealed (key: byte[]) (sealedBytes: byte[]) =
         if sealedBytes.Length < NonceBytes + TagBytes then
             None

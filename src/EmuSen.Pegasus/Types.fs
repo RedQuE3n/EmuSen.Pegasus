@@ -10,15 +10,35 @@ module Version =
     [<Literal>]
     let FileSchema = 1uy
 
-/// Derived from a public key, not drawn, so it survives a restart. See
-/// Pegasus_Identity.md §6.
+/// Names a person. Derived from their public key rather than drawn at random,
+/// so it is the same on Tuesday as it was on Monday -- see Fingerprint in
+/// Identity.fs. There is deliberately no New(): a PeerId that is not a
+/// fingerprint of something is a PeerId that means nothing.
+///
+/// This is NOT the Yjs client id. That names a replica, this names a person,
+/// and one person may hold two replicas -- a laptop and a desktop signed in as
+/// the same handle. Giving those the same client id is exactly the silent data
+/// loss demonstrated in Pegasus_Design.md §4.5, so ClientId.fresh stays random
+/// per document and owes nothing to this.
 type PeerId =
     | PeerId of string
 
     member this.Value = let (PeerId v) = this in v
 
-/// A login name. Grammar, and why comparison folds case, in
-/// Pegasus_Identity.md §1.
+/// A login name -- `RedQuE3n`, the thing your peer sees you as.
+///
+/// The grammar is narrow because a handle gets read aloud and retyped: 3 to 20
+/// characters, letters, digits, hyphen and underscore, and it must begin with a
+/// letter so it can never be mistaken for a number or a flag.
+///
+/// Comparison folds case and the display form is kept, which is the rule AIM
+/// used and the right one for a name people say out loud: `RedQuE3n` and
+/// `redque3n` are one account, and the one the user typed is the one shown.
+/// That is why equality is custom -- structural equality would compare the
+/// display strings and let the same person own two accounts.
+///
+/// The case is private so the only way to hold a Handle is to have parsed one.
+/// Anything that has a Handle can stop asking whether it is well formed.
 [<CustomEquality; NoComparison>]
 type Handle =
     private
@@ -58,7 +78,14 @@ type NoteId =
     static member New() = NoteId(Guid.NewGuid().ToString("N"))
     member this.Value = let (NoteId v) = this in v
 
-/// The handle is asserted rather than proven -- Pegasus_Identity.md §2.
+/// Who is at the other end, as far as this peer can tell.
+///
+/// "As far as it can tell" is load-bearing: the handle here was asserted by
+/// whoever sent the Hello and nothing checked it. Anybody holding the join code
+/// can claim to be anybody. Binding a handle to its key across the wire -- a
+/// signed challenge, and the peer's key pinned from a previous session -- is the
+/// pass after this one, and until it lands a displayed handle is a convenience,
+/// not authentication.
 type PeerInfo =
     { Id: PeerId
       Handle: Handle

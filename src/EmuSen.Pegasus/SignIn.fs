@@ -12,8 +12,19 @@ open EmuSen.Pegasus
 let private textOf (box: TextBox) =
     box.Text |> Option.ofObj |> Option.defaultValue ""
 
-/// Unlocks a key held on this disk. It proves nothing to a peer, and the
-/// window says so rather than implying otherwise -- Pegasus_Identity.md §2.
+/// The first window a user sees: pick a handle, type a password, get an
+/// Identity out the other side.
+///
+/// What this window actually does is unlock a keypair sitting on this disk. It
+/// proves nothing to anyone else -- there is no server here to check a password
+/// against, and there is deliberately not going to be one. The hint at the
+/// bottom of the window says so in the user's words, because a login box that
+/// looks like every other login box will otherwise be assumed to mean what
+/// those mean.
+///
+/// It raises SignedIn rather than opening the notepad itself. The window that
+/// knows how to take a password should not also be the window that knows what
+/// the application does next; Program.fs owns that.
 type SignInWindow(root: string) as this =
     inherit ToolWindow()
 
@@ -25,6 +36,9 @@ type SignInWindow(root: string) as this =
     let message = Ui.Hint ""
     let known = ListBox(MaxHeight = 130.0, Width = 260.0, HorizontalAlignment = left)
 
+    /// Fills the list of identities already on this machine, and hides it
+    /// entirely when there are none -- on a first run the list would otherwise
+    /// be an empty box with no explanation, which reads as something broken.
     let refreshKnown () =
         let handles = IdentityStore.list root
         known.ItemsSource <- handles |> Array.map (fun h -> box h.Value)
@@ -34,8 +48,14 @@ type SignInWindow(root: string) as this =
         message.Text <- why
         message.Foreground <- SolidColorBrush Colors.IndianRed
 
-    /// Sign in and create differ only in which store operation they run, so
-    /// they share everything else including the failure path.
+    /// Signing in and creating differ only in which store operation they run,
+    /// so they share everything else: the same handle parse, the same failure
+    /// path, the same clearing of the password box. Taking the operation as a
+    /// parameter is what lets the two buttons be one line each.
+    ///
+    /// The handle is parsed before the store is touched, so a malformed one is
+    /// refused without ever reaching the disk, and the user is told which of the
+    /// grammar rules they broke rather than "invalid".
     let attempt (operation: Handle -> string -> Result<Identity, IdentityError>) =
         match Handle.TryParse(textOf handle) with
         | Error why -> fail why
@@ -43,6 +63,9 @@ type SignInWindow(root: string) as this =
             match operation parsed (textOf password) with
             | Error e -> fail e.Message
             | Ok identity ->
+                // Cleared on success, not on failure: a user who mistyped it
+                // wants to correct it, and a user who is through with it should
+                // not leave it sitting in a control.
                 password.Text <- ""
                 signedIn.Trigger identity
 
@@ -59,6 +82,8 @@ type SignInWindow(root: string) as this =
                 password.Focus() |> ignore
             | _ -> ())
 
+        // Enter signs in rather than creating. Getting this the wrong way round
+        // would mean a mistyped password silently making a second account.
         password.KeyDown.Add(fun e ->
             if e.Key = Key.Enter then
                 attempt (IdentityStore.unlock root))
@@ -73,6 +98,9 @@ type SignInWindow(root: string) as this =
                     "Create",
                     fun () ->
                         attempt (IdentityStore.create root)
+                        // Refreshed unconditionally: on success the new handle
+                        // joins the list, and on failure the list is already
+                        // right, so there is nothing to branch on.
                         refreshKnown ()
                 )
             )

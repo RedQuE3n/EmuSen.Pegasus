@@ -45,8 +45,12 @@ module Codec =
         w.Write p.Handle.Value
         w.Write p.Color
 
-    /// A handle arriving from the wire is validated here, so the grammar in
-    /// Pegasus_Identity.md §1 holds for remote peers too.
+    /// Validates the handle rather than trusting it, so the grammar holds for
+    /// remote peers as well as local ones. Nothing downstream should have to
+    /// wonder whether a Handle it is holding came off a socket.
+    ///
+    /// This rejects a malformed handle; it does not and cannot check that the
+    /// sender is entitled to the handle they sent. See PeerInfo in Types.fs.
     let private readPeer (r: BinaryReader) : PeerInfo =
         let id = r.ReadString()
         let handle = r.ReadString()

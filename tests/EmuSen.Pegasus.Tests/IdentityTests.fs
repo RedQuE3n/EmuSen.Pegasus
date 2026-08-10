@@ -42,8 +42,11 @@ let ``a null handle is refused rather than throwing`` () =
 
 [<Fact>]
 let ``handles compare case-insensitively and display as typed`` () =
-    // The AIM rule, and the reason the file is named by the folded form while
-    // the handle line carries the capitalisation. Pegasus_Identity.md §1.
+    // Both halves matter and they pull in opposite directions: comparison must
+    // fold so one person cannot end up owning two accounts that look identical
+    // when spoken, and display must not fold or the user's own capitalisation
+    // is thrown away. GetHashCode is asserted alongside Equals because a Map or
+    // a HashSet of handles would quietly break if only one of them folded.
     let typed = Handle.Parse "RedQuE3n"
     let shouted = Handle.Parse "REDQUE3N"
 
@@ -74,8 +77,10 @@ let ``a created identity can be unlocked with its password`` () =
 
 [<Fact>]
 let ``the fingerprint survives a restart, which a fresh GUID did not`` () =
-    // The concrete regression: PeerId was Guid.NewGuid() per launch, so a peer
-    // had no identity to recognise. Pegasus_Identity.md §6.
+    // The concrete regression this replaced: PeerId was Guid.NewGuid() minted
+    // on every launch, so a peer's id changed each time the application started
+    // and there was nothing for the far side to recognise across a restart. Two
+    // unlocks of the same file must agree, or "identity" means nothing.
     let root = tempRoot ()
     create root "alice" "pw" |> ignore
 
@@ -87,10 +92,17 @@ let ``the fingerprint survives a restart, which a fresh GUID did not`` () =
 
 [<Fact>]
 let ``the private key is not written in the clear`` () =
-    // Compared as base64, because that is how the file stores it. An earlier
-    // version of this guard compared raw bytes against a base64 file, passed
-    // against a deliberately unsealed write, and was worth nothing.
-    // Pegasus_Identity.md §3.
+    // Compared as base64, because base64 is how the file stores it.
+    //
+    // The first version of this guard compared the raw PKCS#8 bytes against the
+    // file's bytes. Those can never match whatever is written, so it passed
+    // against a build deliberately altered to store the key UNSEALED, and was
+    // worth nothing. Run a guard against the failure it claims to catch before
+    // believing it -- Pegasus_Design.md §11 is the same lesson at larger scale.
+    //
+    // The length assertion is the second, independent check: a sealed blob is
+    // exactly a nonce and a tag longer than what it wraps, so storing the key
+    // in the clear fails this too even if the base64 comparison were fooled.
     let root = tempRoot ()
     let identity = create root "alice" "pw"
     let secret = identity.ExportPrivateKey()
@@ -152,9 +164,11 @@ let ``a damaged identity file is reported, not crashed on`` () =
 
 [<Fact>]
 let ``the key survives the round trip through the file`` () =
-    // Signing with the unlocked key and verifying against the public line is
-    // the only proof that what came back is the same keypair, not merely a
-    // well-formed one. Nothing on the wire is signed yet -- Pegasus_Identity.md §2.
+    // Unlocking successfully only proves the envelope opened. Signing with the
+    // key that came out and verifying against the public key written before it
+    // was sealed is what proves the same keypair came back rather than merely a
+    // well-formed one. The negative case is there so the verification cannot be
+    // passing by returning true for everything.
     let root = tempRoot ()
     let payload = Encoding.UTF8.GetBytes "prove it"
     let published = (create root "alice" "pw").PublicKey
@@ -188,9 +202,16 @@ let ``two identities are told apart by fingerprint and colour`` () =
 
 [<Fact>]
 let ``the fingerprint is not usable as a Yjs client id`` () =
-    // They name different things: a person, and a replica. One person may hold
-    // two replicas, and giving those one id is Pegasus_Design.md §4.5's silent
-    // data loss. This asserts the two are independent, not merely unequal.
+    // A PeerId names a person and a Yjs client id names a replica, and the
+    // difference is not academic: one person may hold two replicas -- a laptop
+    // and a desktop signed in as the same handle -- and giving those the same
+    // client id is the silent data loss measured in Pegasus_Design.md §4.5,
+    // where colliding ids make a merge keep one side's edits and discard the
+    // other's with no error raised.
+    //
+    // So this asserts client ids stay independent of identity and inside the
+    // 2^32 ceiling that Pegasus_Design.md §4.7 bisected, rather than merely
+    // that two numbers happen to differ.
     let identity = Identity.Generate(Handle.Parse "alice")
     use first = new DocumentActor()
     use second = new DocumentActor()
@@ -206,7 +227,11 @@ let ``the fingerprint is not usable as a Yjs client id`` () =
 
 [<Fact>]
 let ``a peer that sends an unusable handle is rejected`` () =
-    // Codec validates what arrives, so the grammar holds for remote peers too.
+    // A frame is decoded before anything downstream sees it, so a peer sending
+    // a handle that breaks the grammar is refused at the boundary rather than
+    // producing a Handle that could not have been constructed locally. Built by
+    // hand here rather than through Codec.encode, because Codec.encode cannot
+    // produce an invalid handle -- which is the point.
     let hostile =
         use stream = new MemoryStream()
         use w = new IO.BinaryWriter(stream, UTF8Encoding false, true)

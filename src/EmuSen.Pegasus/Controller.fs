@@ -6,8 +6,14 @@ open System.Threading
 open EmuSen.Pegasus
 open EmuSen.Pegasus
 
-/// Linking exists because Connected now carries a Handle and there is no
-/// honest one to show until Hello arrives. See Pegasus_Identity.md §2.
+/// What the status bar is showing, and the only thing the view needs to know
+/// about the network.
+///
+/// Linking is the gap between "the socket is up" and "the other side has told
+/// us who it is". It exists because Connected carries a Handle: there is no
+/// honest handle to put in it until Hello arrives, and the previous code filled
+/// that gap with Connected "connecting...", a fake name in a field meant for a
+/// real one. The type refusing to hold that is the type doing its job.
 type ConnectionState =
     | Offline
     | Hosting of code: string * port: int
@@ -39,6 +45,12 @@ let defaultWorkspaceRoot =
 
 /// Owns the workspace, the open note and the session, so the view stays a
 /// function of state. Compaction threshold and projection policy live here.
+///
+/// Takes the PeerInfo it should present rather than an Identity or a path to
+/// one. Nothing in here needs to know how a keypair is stored, or that keypairs
+/// exist at all -- it needs a name and a colour to put on the wire. That keeps
+/// the identity format free to change without touching this file, and it is why
+/// the tests can build a Notepad without going near a password.
 type Notepad(root: string, self: PeerInfo) =
     let workspace = new Workspace(root)
 
@@ -165,8 +177,12 @@ type Notepad(root: string, self: PeerInfo) =
         task {
             try
                 let! s = Client.connectAsync address port code self doc cts.Token
-                // Before Attach, which starts the pump: Hello can arrive and set
-                // Connected, and this would otherwise overwrite it.
+
+                // Set Linking BEFORE Attach, not after. Attach starts the frame
+                // pump, and the peer's Hello can arrive and set Connected before
+                // the next line of this function runs -- setting Linking
+                // afterwards would overwrite a real connection with "connecting"
+                // and leave it there, since nothing else fires to correct it.
                 setState Linking
                 this.Attach s
             with e ->

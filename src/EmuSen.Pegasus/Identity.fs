@@ -4,7 +4,13 @@ open System
 open System.IO
 open System.Security.Cryptography
 
-/// Everything sign-in can refuse to do. See Pegasus_Identity.md §3.
+/// Every way signing in can refuse. These are returned rather than thrown
+/// because none of them is exceptional -- typing the wrong password is an
+/// ordinary thing a user does, and the sign-in window wants to put the reason
+/// on screen, not catch something.
+///
+/// Message is what the window shows. Keep it in the user's vocabulary: they
+/// know what a handle and a password are, and they do not know what PKCS#8 is.
 type IdentityError =
     | InvalidHandle of why: string
     | HandleTaken of Handle
@@ -20,34 +26,64 @@ type IdentityError =
         | WrongPassword -> "wrong password"
         | Unreadable why -> $"the identity file could not be read: {why}"
 
-/// Fingerprint and caret colour are both derived from the public key, and
-/// neither is the Yjs client id. See Pegasus_Identity.md §6.
+/// Both of a peer's visible marks -- its id and its caret colour -- are derived
+/// from its public key, so they are stable for as long as the key is and cannot
+/// be set to something misleading by hand.
+///
+/// Before this existed, PeerId was Guid.NewGuid() minted on every launch, which
+/// meant a peer had no identity to recognise across a restart, not even a wrong
+/// one.
 module Fingerprint =
 
-    /// Indexed rather than computed in a colour space, so no identity can land
-    /// on an unreadable tint. Pegasus_Identity.md §6.
+    /// A fixed palette indexed by the key, rather than a hue computed in a
+    /// colour space. Computing one risks landing on a tint that is unreadable
+    /// against the theme, or on two tints too close to tell apart; twelve
+    /// hand-picked colours cannot. Extend the list rather than replacing it,
+    /// since changing the order changes everybody's colour.
     let private palette =
         [| "#7c5cff"; "#2fa4a0"; "#d2691e"; "#4a90d9"
            "#c04a7a"; "#5aa02c"; "#b58900"; "#8f6fd0"
            "#e0533d"; "#2e8b8b"; "#a0522d"; "#3b7dd8" |]
 
+    /// The first 8 bytes of SHA-256 over the public key, as 16 hex characters.
+    ///
+    /// Eight bytes is short enough for a human to compare down a phone line and
+    /// long enough that nobody is going to collide with it by accident. It is
+    /// NOT long enough to resist someone deliberately grinding out a key with a
+    /// matching prefix, which will matter when keys are pinned and a mismatch
+    /// has to be trusted -- until then nothing depends on it being unforgeable.
     let ofPublicKey (publicKey: byte[]) =
         let digest = SHA256.HashData publicKey
         PeerId(Convert.ToHexStringLower digest[0..7])
 
+    /// Byte 8, deliberately not one of the eight the id uses, so two peers with
+    /// visibly similar ids do not also get the same colour.
     let colourOf (publicKey: byte[]) =
         let digest = SHA256.HashData publicKey
         palette[int digest[8] % palette.Length]
 
-/// One signed-in person: a handle bound to a keypair this machine holds. The
-/// keypair is not yet used on the wire -- Pegasus_Identity.md §2.
+/// One signed-in person: a handle bound to a keypair this machine holds.
+///
+/// The keypair is generated, stored, loaded and exercised, but NOTHING ON THE
+/// WIRE IS SIGNED YET. A peer receiving a Hello has no way to tell whether the
+/// sender holds the key its fingerprint names, so a displayed handle is a
+/// convenience and not authentication. Sign and Verify exist so that the pass
+/// which adds a signed challenge is a small step rather than a redesign, and so
+/// the suite can prove the key survives the trip through the file.
+///
+/// Disposable because ECDsa holds a native key handle. Dropping one without
+/// disposing leaves it to the finaliser rather than leaking outright, but the
+/// key material stays in memory longer than it needs to.
 type Identity private (handle: Handle, key: ECDsa) =
+    // Exported once: it is asked for on every Peer read, and re-exporting per
+    // call would hash the same bytes repeatedly for no reason.
     let publicKey = key.ExportSubjectPublicKeyInfo()
 
     member _.Handle = handle
     member _.PublicKey = publicKey
     member _.Fingerprint = Fingerprint.ofPublicKey publicKey
 
+    /// What this identity looks like to the other peer.
     member this.Peer : PeerInfo =
         { Id = this.Fingerprint
           Handle = handle
@@ -58,19 +94,40 @@ type Identity private (handle: Handle, key: ECDsa) =
     member _.Verify(data: byte[], signature: byte[]) =
         key.VerifyData(data, signature, HashAlgorithmName.SHA256)
 
-    /// P-256 because .NET ships no Ed25519 -- Pegasus_Identity.md §5.
+    /// P-256, and Ed25519 would have been the better choice.
+    ///
+    /// .NET 10 does not have Ed25519 -- System.Security.Cryptography offers
+    /// ECDsa and the post-quantum MLDsa and nothing in between. Getting it means
+    /// taking on NSec or BouncyCastle, and a dependency has to earn itself; for
+    /// binding a handle between two people, it does not. P-256 with SHA-256 is
+    /// in the framework, exports as the standard SubjectPublicKeyInfo and
+    /// Pkcs8PrivateKey encodings that any other language can read, and is
+    /// entirely adequate here. ECDSA's famous sharp edge -- a repeated nonce
+    /// leaking the private key -- lives inside the platform's implementation,
+    /// not in anything written here.
+    ///
+    /// Switching later is a version bump on the file's first line: the format
+    /// carries a `public` line and a `kdf` line and assumes no curve.
+    /// Pegasus_Identity.md §5 has the argument in full.
     static member Generate(handle: Handle) =
         new Identity(handle, ECDsa.Create ECCurve.NamedCurves.nistP256)
 
     static member internal OfPrivateKey(handle: Handle, pkcs8: byte[]) =
         let key = ECDsa.Create()
+        // The out parameter is how many bytes were consumed. We do not check it:
+        // the array came from our own file and a short read would fail at the
+        // first signature anyway.
         let mutable read = 0
         key.ImportPkcs8PrivateKey(ReadOnlySpan pkcs8, &read)
         new Identity(handle, key)
 
+    /// Internal, and visible to the test assembly only so the suite can assert
+    /// these bytes never reach the file unsealed. Nothing else should want it.
     member internal _.ExportPrivateKey() = key.ExportPkcs8PrivateKey()
 
-    /// Verifies a signature against a bare public key, with no private half.
+    /// Verifies against a bare public key, with no private half anywhere. This
+    /// is the shape the pinned-key handshake will need: you hold your peer's
+    /// public key from a previous session and check what they just sent.
     static member VerifyWith(publicKey: byte[], data: byte[], signature: byte[]) =
         use key = ECDsa.Create()
         let mutable read = 0
@@ -80,7 +137,25 @@ type Identity private (handle: Handle, key: ECDsa) =
     interface IDisposable with
         member _.Dispose() = key.Dispose()
 
-/// Identity files on disk, one per handle. Layout in Pegasus_Identity.md §3.
+/// Identity files on disk, one per handle.
+///
+/// The format is line-oriented text, `key value` per line:
+///
+///     pegasus-identity 1
+///     handle RedQuE3n
+///     created 2026-08-09T23:41:07Z
+///     public <base64 SubjectPublicKeyInfo>
+///     kdf pbkdf2-sha256 210000 <base64 salt>
+///     secret <base64 nonce || ciphertext || tag>
+///
+/// Text rather than a binary blob on purpose: somebody should be able to answer
+/// "is my key actually encrypted in there" with `cat` and no debugger. Every
+/// line is public except `secret`, which is the PKCS#8 private key sealed under
+/// the password-derived key.
+///
+/// This is deliberately not the .pegasus format (Pegasus_Format.md). An identity
+/// is written once and read many times, so it needs no append log, no compaction
+/// and no torn-write recovery -- there is no stream of updates to recover.
 module IdentityStore =
 
     [<Literal>]
@@ -89,8 +164,12 @@ module IdentityStore =
     [<Literal>]
     let private Kdf = "pbkdf2-sha256"
 
-    /// Beside the workspace rather than inside it: an identity is not a note,
-    /// and the workspace is not partitioned by handle -- Pegasus_Identity.md §7.
+    /// Beside the workspace, not inside it. An identity is not a note, and the
+    /// workspace is deliberately NOT partitioned by handle: notes stay where
+    /// they have always been and every identity on a machine sees the same
+    /// ones. A handle says who you are to your peer; it is not a separate
+    /// account of files. Partitioning would strand every note written before
+    /// sign-in existed, for no benefit to two people who each own their machine.
     let defaultRoot =
         let data =
             match Environment.GetFolderPath Environment.SpecialFolder.LocalApplicationData with
@@ -99,9 +178,15 @@ module IdentityStore =
 
         Path.Combine(data, "Pegasus", "identity")
 
+    /// Named by the folded handle, so `RedQuE3n` and `redque3n` cannot become
+    /// two accounts. The capitalisation to display lives in the file's own
+    /// handle line.
     let private pathOf (root: string) (handle: Handle) =
         Path.Combine(root, handle.Folded + ".id")
 
+    /// Split on the FIRST space only, so a value may contain spaces -- the kdf
+    /// line does. Lines that do not split are ignored rather than rejected,
+    /// which lets a future version add lines this build has never heard of.
     let private fields (text: string) =
         text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
         |> Array.choose (fun line ->
@@ -110,8 +195,13 @@ module IdentityStore =
             | _ -> None)
         |> Map.ofArray
 
-    /// Display handles of every identity on this machine, in folded order. A
-    /// file too damaged to name itself falls back to its filename.
+    /// Every identity on this machine, for the sign-in window to offer.
+    ///
+    /// Reads each file for its handle line so the list shows the capitalisation
+    /// the handle was created with. A file too damaged to name itself falls back
+    /// to its filename rather than vanishing from the list -- an identity you
+    /// cannot open should still be visible, or the user is left wondering where
+    /// it went.
     let list (root: string) =
         if not (Directory.Exists root) then
             [||]
@@ -132,8 +222,22 @@ module IdentityStore =
 
     let exists (root: string) (handle: Handle) = File.Exists(pathOf root handle)
 
-    /// Writes the identity out sealed under the password. The private key is
-    /// zeroed once sealed rather than left for the collector.
+    /// Seals the private key under the password and writes the file.
+    ///
+    /// The salt is RANDOM here and stored beside the ciphertext, which is the
+    /// opposite of the join code's fixed salt in Crypto.deriveKey. That is not
+    /// an inconsistency: there, both peers must arrive at the same key from the
+    /// code alone with no round trip in which to agree on a salt, so the salt
+    /// cannot vary and precomputation against the small code space is possible.
+    /// Here only this machine derives the key, from a password only its owner
+    /// types, so nothing forces the weakness and taking it anyway would be
+    /// carelessness. Same primitive, opposite constraint.
+    ///
+    /// The iteration count is written into the file rather than assumed, so
+    /// raising it later does not lock anyone out of an existing identity.
+    ///
+    /// The exported key is zeroed once sealed. It cannot be un-exported, but it
+    /// can at least stop sitting in a heap block waiting for the collector.
     let private write (root: string) (identity: Identity) (password: string) =
         let salt = Crypto.newSalt ()
         let key = Crypto.derivePassword password salt Crypto.Iterations
@@ -157,9 +261,15 @@ module IdentityStore =
         let path = pathOf root identity.Handle
         File.WriteAllText(path, text)
 
+        // Owner-only where the platform has the concept. Windows does not, and
+        // SetUnixFileMode throws there rather than no-opping.
         if not (OperatingSystem.IsWindows()) then
             File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
 
+    /// Generates a new keypair and writes it out. Refuses rather than
+    /// overwriting: silently replacing an identity would destroy the only copy
+    /// of a key, and the user who typed a handle they had forgotten they owned
+    /// would never know.
     let create (root: string) (handle: Handle) (password: string) =
         if exists root handle then
             Error(HandleTaken handle)
@@ -170,9 +280,18 @@ module IdentityStore =
                 write root identity password
                 Ok identity
             with e ->
+                // Nothing was stored, so the key is of no use to anyone; dispose
+                // it rather than leaving a live handle to a key nobody holds.
                 (identity :> IDisposable).Dispose()
                 Error(Unreadable e.Message)
 
+    /// Reads the file and opens the sealed key with the password.
+    ///
+    /// A wrong password is indistinguishable from a tampered file at this layer
+    /// -- both are a GCM authentication failure -- and it is reported as
+    /// WrongPassword because that is what it nearly always is. Note this uses
+    /// Crypto.tryOpenSealed rather than openSealed: the raising form's message
+    /// talks about join codes, which would be nonsense on this path.
     let unlock (root: string) (handle: Handle) (password: string) =
         let path = pathOf root handle
 
@@ -193,8 +312,10 @@ module IdentityStore =
                         match Crypto.tryOpenSealed derived (Convert.FromBase64String secret) with
                         | None -> Error WrongPassword
                         | Some pkcs8 ->
-                            // The file's own handle line carries the capitalisation to
-                            // display; the filename is folded -- Pegasus_Identity.md §1.
+                            // Prefer the file's handle line to the one that was
+                            // typed, so signing in as "redque3n" still displays
+                            // "RedQuE3n". Falls back to what was typed if that
+                            // line is missing or no longer parses.
                             let named =
                                 Map.tryFind "handle" f
                                 |> Option.bind (Handle.TryParse >> Result.toOption)
@@ -206,4 +327,7 @@ module IdentityStore =
                     | _ -> Error(Unreadable $"unrecognised kdf line '{kdf}'")
                 | _ -> Error(Unreadable "a required line is missing")
             with e ->
+                // Anything the file can throw -- bad base64, a truncated line, a
+                // key that will not import -- is the file being unreadable. The
+                // user can act on that; a stack trace they cannot.
                 Error(Unreadable e.Message)

@@ -19,9 +19,21 @@ type private Started =
 
     member this.Window = this.Desktop.MainWindow
 
-/// Drives the shipped App through a real desktop lifetime. Nothing here stands
-/// in for the startup being tested -- the window swap under test is the one in
-/// Program.fs. See Pegasus_Design.md §12.
+/// Starts the real application: a real App, a real desktop lifetime, real
+/// windows, and the real OnFrameworkInitializationCompleted. Nothing here is a
+/// stand-in for the code under test -- the window swap being exercised is the
+/// one that ships.
+///
+/// Exactly one thing is supplied that the framework would otherwise do:
+/// MainWindow.Show(). ClassicDesktopStyleApplicationLifetime.Start shows the
+/// main window and then runs a message loop, and a test must not run a message
+/// loop, so this does the first half and leaves the second. That is the honest
+/// boundary of these tests, and it is why nothing here proves the application
+/// survives a real session -- only that startup assembles the right windows and
+/// asks to exit at the right times.
+///
+/// Temp roots for both, so the suite never writes into a real workspace or a
+/// real identity store.
 let private start () =
     started.Force()
 
@@ -62,16 +74,23 @@ let ``the application opens on the sign-in window`` () =
 
 [<Fact>]
 let ``no workspace is touched before anyone has signed in`` () =
-    // The notepad is constructed inside the sign-in callback, so an unattended
-    // machine sitting at the prompt writes nothing and opens no note.
+    // Reads like a nicety and is not. The notepad is constructed inside the
+    // sign-in callback, so a machine left sitting at the prompt writes nothing
+    // to disk and opens no note as nobody. Moving that one construction up out
+    // of the callback breaks this and nothing else in the suite would notice.
     let app = start ()
     Assert.Empty(Directory.GetFileSystemEntries app.WorkspaceRoot)
     app.Window.Close()
 
 [<Fact>]
 let ``signing in swaps the sign-in window for the notepad`` () =
-    // The gap this file exists to close: the swap lives in Program.fs and was
-    // previously only ever exercised by launching the application by hand.
+    // The gap this file exists to close. The swap lives in Program.fs and was
+    // for one commit exercised only by launching the application and looking at
+    // it, which is evidence but is not a test.
+    //
+    // Three things have to hold together: the notepad becomes the main window,
+    // it is a different window from the one before, and the sign-in window is
+    // actually closed rather than left sitting behind it.
     let app = start ()
     let signIn = app.Window
     let mutable signInClosed = false
@@ -103,8 +122,9 @@ let ``the notepad opens as the handle that signed in`` () =
 
 [<Fact>]
 let ``the notepad that replaces the sign-in window is usable and templated`` () =
-    // Templated as well as present: a swapped-in blank window would be the
-    // Pegasus_Design.md §11 failure with an extra step in front of it.
+    // Present is not enough; it has to be drawn. A swapped-in blank window
+    // would be the Pegasus_Design.md §11 failure with an extra step in front of
+    // it, and every other assertion in this file would still pass.
     let app = start ()
     signInAs app "RedQuE3n" "hunter2"
 
@@ -157,8 +177,9 @@ let ``closing the notepad ends the application`` () =
 
 [<Fact>]
 let ``closing the sign-in window without signing in ends the application`` () =
-    // Otherwise a user who changes their mind at the prompt is left with a
-    // process they cannot see and cannot quit.
+    // Under OnExplicitShutdown nothing ends the process on its own, so a user
+    // who changes their mind at the prompt would otherwise be left with no
+    // window and a process still running that they can neither see nor quit.
     let app = start ()
     let mutable exited = false
     app.Desktop.Exit.Add(fun _ -> exited <- true)

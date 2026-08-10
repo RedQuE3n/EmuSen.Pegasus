@@ -42,8 +42,13 @@ type PegasusWindow(pad: Notepad) as this =
     let code = TextBox(PlaceholderText = "join code", Width = 170.0)
     let status = Ui.Hint "offline"
 
-    /// Handle and the leading half of the fingerprint, tinted with the colour
-    /// both are derived from. See Pegasus_Identity.md §6.
+    /// Who you are signed in as: handle, then the leading half of the
+    /// fingerprint, tinted with the colour that is derived from the same key.
+    ///
+    /// The fingerprint is shown rather than hidden because it is the only thing
+    /// on screen that a person could read down a phone line to check they are
+    /// the identity their peer expects. Eight characters is what fits and what
+    /// somebody will actually read aloud.
     let whoami =
         let label = Ui.Hint $"{pad.Self.Handle.Value}  ·  {pad.Self.Id.Value[..7]}"
         label.Foreground <- SolidColorBrush(Color.Parse pad.Self.Color)
