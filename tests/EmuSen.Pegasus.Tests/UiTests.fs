@@ -1,96 +1,13 @@
+[<Xunit.Collection "Avalonia">]
 module EmuSen.Pegasus.Tests.UiTests
 
 open System
-open System.IO
-open System.Threading
-open Avalonia
 open Avalonia.Controls
-open Avalonia.Controls.Primitives
-open Avalonia.Headless
-open Avalonia.LogicalTree
 open Avalonia.Threading
-open Avalonia.Themes.Fluent
 open Xunit
 open EmuSen.Pegasus
 open EmuSen.Pegasus.Controller
-
-type private HeadlessApp() =
-    inherit Application()
-    // Shell.applyTheme, not a bare FluentTheme: loading a different theme than
-    // the application loads is what let a blank window pass the suite.
-    override this.Initialize() = Shell.applyTheme this
-
-// Avalonia may only be initialised once per process, so every test shares this.
-// LunaApp is deliberately not used here -- it resolves the saved theme through
-// ConfigStore, which a test has no business touching. See Pegasus_Design.md §9.
-let started =
-    lazy
-        (AppBuilder
-            .Configure<HeadlessApp>()
-            .UseHeadless(AvaloniaHeadlessPlatformOptions(UseHeadlessDrawing = true))
-            .SetupWithoutStarting()
-         |> ignore)
-
-let tempRoot () =
-    let dir = Path.Combine(Path.GetTempPath(), "pegasus-ui", Guid.NewGuid().ToString "N")
-    Directory.CreateDirectory dir |> ignore
-    dir
-
-let private editorOf (window: Window) =
-    window.GetLogicalDescendants()
-    |> Seq.choose (fun c ->
-        match box c with
-        | :? TextBox as t when t.AcceptsReturn -> Some t
-        | _ -> None)
-    |> Seq.head
-
-let private boxWith (window: Window) (placeholder: string) =
-    window.GetLogicalDescendants()
-    |> Seq.pick (fun c ->
-        match box c with
-        | :? TextBox as t when t.PlaceholderText = placeholder -> Some t
-        | _ -> None)
-
-let private buttonSaying (window: Window) (label: string) =
-    window.GetLogicalDescendants()
-    |> Seq.pick (fun c ->
-        match box c with
-        | :? Button as b when string b.Content = label -> Some b
-        | _ -> None)
-
-let private click (button: Button) =
-    button.RaiseEvent(Interactivity.RoutedEventArgs Button.ClickEvent)
-    Dispatcher.UIThread.RunJobs()
-
-let private showsText (window: Window) (text: string) =
-    window.GetLogicalDescendants()
-    |> Seq.exists (fun c ->
-        match box c with
-        | :? TextBlock as t -> t.Text = text
-        | _ -> false)
-
-let private untemplatedIn (window: Window) =
-    window.Measure(Size(1000.0, 680.0))
-    window.Arrange(Rect(0.0, 0.0, 1000.0, 680.0))
-    Dispatcher.UIThread.RunJobs()
-
-    window.GetLogicalDescendants()
-    |> Seq.choose (fun c ->
-        match box c with
-        | :? TemplatedControl as t when isNull t.Template -> Some(t.GetType().Name)
-        | _ -> None)
-    |> Seq.distinct
-    |> Seq.toArray
-
-let private pump (predicate: unit -> bool) =
-    let deadline = DateTime.UtcNow.AddSeconds 5.0
-
-    while not (predicate ()) && DateTime.UtcNow < deadline do
-        Dispatcher.UIThread.RunJobs()
-        Thread.Sleep 10
-
-    Dispatcher.UIThread.RunJobs()
-    predicate ()
+open EmuSen.Pegasus.Tests.Headless
 
 [<Fact>]
 let ``the window renders an editor bound to the open note`` () =

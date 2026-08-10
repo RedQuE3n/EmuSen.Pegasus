@@ -506,3 +506,83 @@ existing directory at the old location keeps being used. This mirrors EmuSen's
 inventing a second migration idiom — and it is the same rule that project's ROM
 library gets, which is that data a user authored is read, never quietly
 abandoned.
+
+---
+
+## 12. Testing the startup path
+
+The window swap — sign-in window first, notepad replacing it — lived in
+`Program.fs` and was for one commit exercised only by launching the application
+and looking at it. That is not nothing, but it is not a test either, and this
+section records closing the gap because *why* it was open is the interesting
+part.
+
+### 12.1 It was untestable because it named the real directories
+
+`App` resolved `IdentityStore.defaultRoot` and `defaultWorkspaceRoot` itself.
+Any test driving it would have created identities and notes in the developer's
+own `~/.local/share/Pegasus`, so no such test could be written that was safe to
+run. The fix is the general one this project keeps reaching for: take the thing
+rather than name it. `App(identityRoot, workspaceRoot)` is what the suite
+constructs, and a parameterless overload supplies the real pair because
+`LunaApp.Configure<App>()` needs one.
+
+This is the same shape as `Notepad` taking a `PeerInfo` instead of reaching into
+a credential store (`Pegasus_Identity.md` §3). A component that names its own
+inputs cannot be placed anywhere else, including a test harness — untestable and
+un-reusable turn out to be the same property seen from two sides.
+
+### 12.2 What the test drives, and the one thing it fakes
+
+A real `App`, a real `ClassicDesktopStyleApplicationLifetime`, real windows,
+and the real `OnFrameworkInitializationCompleted`. No stand-in for the code
+under test, for the reason §11 exists.
+
+Exactly one thing is supplied by the test that the framework would otherwise do:
+`MainWindow.Show()`. `ClassicDesktopStyleApplicationLifetime.Start` shows the
+main window and then runs a message loop; the suite must not run a message loop,
+so it performs the first half and leaves the second. That is the honest boundary
+of this test, and it is stated here rather than left for a reader to discover.
+
+### 12.3 A second UI test class broke the first one
+
+Adding `StartupTests` alongside `UiTests` immediately turned eight passing tests
+red with `The calling thread cannot access this object because a different
+thread owns it`.
+
+xunit parallelises across test classes. Avalonia's dispatcher belongs to the
+thread that set the platform up, for the life of the process. One UI test class
+had concealed this: there was nothing to run in parallel with. Both now join an
+`Avalonia` collection, which is xunit's way of saying "these run in sequence",
+and the non-UI tests keep their parallelism. The suite was then run five times
+over to confirm it, since a threading fix that happens to pass once is not a fix.
+
+The shared bootstrap and the control-finding helpers moved to `Headless.fs` at
+the same time, so the two classes share one platform setup rather than each
+having an opinion about it.
+
+### 12.4 Four sabotages, four reds
+
+Every assertion here was watched failing against a deliberately broken build
+before being trusted:
+
+| Sabotage | Turned red |
+|---|---|
+| never assign the new `MainWindow` | 4 tests, including the swap itself |
+| never close the sign-in window | the swap test, on the leftover window |
+| construct the notepad eagerly, before sign-in | the two tests asserting an untouched workspace |
+| drop both `desktop.Shutdown()` calls | the two tests asserting the process ends |
+
+The third is worth keeping. "No workspace is touched before anyone has signed
+in" reads like a nicety, and it is really the assertion that an unattended
+machine sitting at the prompt writes nothing to disk and opens no note as
+nobody. It is cheap to break by moving one line, and nothing else in the suite
+would have noticed.
+
+### 12.5 What is still not covered
+
+The message loop. Nothing here proves the application survives a real user
+session, only that the startup sequence assembles the right windows and asks to
+exit at the right times. A launch by hand remains the only evidence for the
+loop itself, and that is a reasonable place to stop: the loop is Avalonia's, not
+ours.

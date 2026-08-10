@@ -8,8 +8,12 @@ open EmuSen.LunaP
 open EmuSen.Pegasus
 open EmuSen.Pegasus.Controller
 
-type App() =
+/// Takes both roots rather than naming them, so the suite can drive the real
+/// startup without writing into the real workspace. See Pegasus_Design.md §12.
+type App(identityRoot: string, workspaceRoot: string) =
     inherit Application()
+
+    new() = App(IdentityStore.defaultRoot, defaultWorkspaceRoot)
 
     override this.Initialize() = Shell.applyTheme this
 
@@ -21,12 +25,12 @@ type App() =
             // notepad replaces it; on the default mode that swap ends the process.
             desktop.ShutdownMode <- ShutdownMode.OnExplicitShutdown
 
-            let signIn = SignIn.SignInWindow IdentityStore.defaultRoot
+            let signIn = SignIn.SignInWindow identityRoot
             let mutable admitted = false
 
             let enter (identity: Identity) =
                 admitted <- true
-                let pad = new Notepad(defaultWorkspaceRoot, identity.Peer)
+                let pad = new Notepad(workspaceRoot, identity.Peer)
 
                 // Start on a note so the editor is usable immediately.
                 match pad.Notes |> Array.tryHead with

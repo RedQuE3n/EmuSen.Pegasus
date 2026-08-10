@@ -10,10 +10,12 @@
 
   <ItemGroup>
     <Compile Include="Peers.fs" />
+    <Compile Include="Headless.fs" />
     <Compile Include="CoreTests.fs" />
     <Compile Include="IdentityTests.fs" />
     <Compile Include="NetTests.fs" />
     <Compile Include="UiTests.fs" />
+    <Compile Include="StartupTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

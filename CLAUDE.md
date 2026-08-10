@@ -6,11 +6,11 @@ as much as the code, and it must survive somebody reading it critically.
 
 ## The man pages
 
-`docs/` is the man pages. Three of them, section-numbered:
+`docs/` is the man pages. Four of them, section-numbered:
 
 | Man page | Covers |
 |---|---|
-| `docs/Pegasus_Design.md` | Why a CRDT, why F#, Phase 0 evidence, dependency defects, assembly boundaries, testing discipline |
+| `docs/Pegasus_Design.md` | Why a CRDT, why F#, Phase 0 evidence, dependency defects, assembly boundaries, testing discipline, the startup path |
 | `docs/Pegasus_Format.md` | The `.pegasus` file, append-only log, compaction, durability, the `.md` projection |
 | `docs/Pegasus_Sync.md` | Topology, pairing, frame layout, the exchange, what the encryption is and is not |
 | `docs/Pegasus_Identity.md` | Handles, the identity file, the password envelope, the fingerprint, what a sign-in proves |

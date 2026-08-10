@@ -74,11 +74,12 @@ switching notes while connected is not supported — disconnect first.
 
     dotnet test
 
-85 tests, all headless — no window is ever opened, including for the UI tests,
+94 tests, all headless — no window is ever opened, including for the UI tests,
 which drive a real Avalonia control tree under `Avalonia.Headless`. The suite
 covers frame and crypto round trips, torn-file recovery, compaction, caret
 arithmetic, property-based convergence under randomised interleavings, identity
-files and their password envelope, two peers over a real loopback socket, and
+files and their password envelope, two peers over a real loopback socket, the
+startup path from sign-in window to notepad through a real desktop lifetime, and
 the full path from one peer's mailbox to the other's rendered editor.
 
 Several of those tests are guards that were made to fail on purpose before being
@@ -88,7 +89,8 @@ private key never reaches the identity file in the clear. The last of those
 passed against a deliberately unsealed write on its first attempt — it compared
 raw bytes to a base64 file — and `docs/Pegasus_Identity.md` §3 records the
 correction. `docs/Pegasus_Design.md` §11 explains what shipped before the first
-of them existed.
+of them existed, and §12.4 lists the four sabotages the startup tests were held
+against.
 
 ## Documentation
 
