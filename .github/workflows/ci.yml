@@ -1,0 +1,28 @@
+# Build and run the suite on every push and pull request.
+#
+# Everything here is headless - no window is ever opened, including for the UI
+# tests, which drive a real Avalonia control tree under Avalonia.Headless. That
+# is why this runs on a bare ubuntu runner with nothing but the .NET SDK: if a
+# test ever needs a display installed, that is a sign the suite stopped being
+# headless rather than a sign this file needs a package.
+name: build
+
+on:
+  push:
+    branches: [main, WiseMan]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - run: dotnet restore
+      - run: dotnet build --no-restore
+      - run: dotnet test --no-build --verbosity normal

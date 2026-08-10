@@ -25,18 +25,39 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <!-- Packed for Chariot, which lives in another repository and consumes this
-         through local-packages/ until it is on GitHub Packages — the same
-         arrangement EmuSen.LunaP already arrives by. In this repository the
-         application takes a ProjectReference instead, so there is no packing
-         step between editing a frame and running the tests. -->
+    <!-- Packed for EmuSen.Chariot, which lives in another repository and cannot
+         resolve a ProjectReference. In THIS repository the application takes a
+         ProjectReference instead, so there is no packing step between editing a
+         frame and running the tests: the package exists for the consumer that
+         cannot see the source, the project reference for the one that can.
+         docs/Pegasus_Design.md §7.1.
+
+         Published to nuget.org from a `core-v*` tag by .github/workflows/
+         publish-core.yml, which holds no credential — NuGet Trusted Publishing
+         exchanges a GitHub OIDC token for a key good for minutes. The version
+         below is only the default for a local `dotnet pack`; the published one
+         comes from the tag, so it cannot be written in two places and disagree
+         with itself. -->
     <IsPackable>true</IsPackable>
     <PackageId>EmuSen.Pegasus.Core</PackageId>
-    <Version>0.1.0</Version>
+    <!-- 0.2.0, and the bump is real. Protocol went from 3 to 4, the Agree frame
+         and the Agreement module arrived with the key agreement, and Chariot is
+         on the InternalsVisibleTo list because a server that signs needs
+         somewhere to keep a key. A consumer on 0.1.0 cannot talk to one on
+         0.2.0 — Hello says so in the first frame rather than letting it be
+         discovered as a decode failure further down. -->
+    <Version>0.2.0</Version>
     <Authors>Tristan Pelland</Authors>
     <Description>Wire types, frame codec, sealed envelope and identity keys shared by Pegasus and Chariot.</Description>
     <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/RedQuE3n/EmuSen.Pegasus</RepositoryUrl>
+    <PackageTags>crdt;protocol;fsharp;pegasus</PackageTags>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- Identity.OfPrivateKey and ExportPrivateKey are internal because nothing

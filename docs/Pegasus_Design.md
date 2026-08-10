@@ -435,8 +435,21 @@ licence is therefore not a free choice while §8 holds.
 
 `EmuSen.Pegasus.Core` now leaves by the same road it arrived on. Chariot is in
 another repository and cannot resolve a `ProjectReference` either, so the core
-is packable and Chariot consumes it from `local-packages/` until it is on GitHub
-Packages — the identical arrangement, and identically temporary.
+is a package too — and it is published to nuget.org from a `core-v*` tag by
+`.github/workflows/publish-core.yml`, the same arrangement the toolkit uses and
+by the same mechanism: NuGet Trusted Publishing, which exchanges a GitHub OIDC
+token proving which repository and which workflow *file* is running for a key
+that lives minutes. No credential is stored in this repository.
+
+The tag is `core-v*` rather than `v*` on purpose. This repository holds two
+things and only one of them is a package; the desktop application may want
+releases of its own one day, and a tag namespace decided after the fact is a tag
+namespace that collides.
+
+The version comes from the tag rather than from the `.fsproj`, for the reason
+the limitation below records: a version written in two places eventually
+disagrees with itself, and NuGet's caching turns that disagreement into a build
+failing on code that was just written.
 
 Inside this repository the application takes a `ProjectReference` rather than
 the package. A packing step between editing a frame and running the tests would

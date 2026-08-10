@@ -1,0 +1,79 @@
+# Publish EmuSen.Pegasus.Core to NuGet.org when a core version tag is pushed.
+#
+#     git tag core-v0.2.0 && git push origin core-v0.2.0
+#
+# `core-v*` RATHER THAN `v*`, because this repository holds two things and only
+# one of them is a package. The desktop application may want releases of its own
+# one day, and a tag namespace decided after the fact is a tag namespace that
+# collides. The prefix is stripped to get the version, so core-v0.2.0 publishes
+# 0.2.0.
+#
+# THERE IS NO API KEY. This uses NuGet Trusted Publishing: the job asks GitHub
+# for a short-lived OIDC token proving which repository and which workflow file
+# is running, and nuget.org exchanges that for a key valid for a few minutes.
+# Nothing long-lived is stored, so there is no secret to leak or rotate.
+#
+# The trust policy lives on nuget.org under Account -> Trusted Publishing and
+# names four things that must match this file exactly:
+#
+#     Publisher          GitHub Actions
+#     Repository Owner   RedQuE3n            (the GitHub LOGIN, not a person's name)
+#     Repository         EmuSen.Pegasus
+#     Workflow           publish-core.yml    (renaming this file breaks publishing)
+#
+# THE VERSION COMES FROM THE TAG, not from the fsproj. A version written in two
+# places will eventually disagree with itself, and the failure mode is one this
+# project has already been bitten by: NuGet caches by package id AND version, so
+# repacking at a version somebody has already restored does not propagate and
+# the build fails on code that was just written.
+name: publish core
+
+on:
+  push:
+    tags: ['core-v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    permissions:
+      # The whole mechanism. Without id-token: write the job cannot ask GitHub
+      # for the token nuget.org wants, and the exchange fails with a bare 401.
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # The whole suite, not just the core's own tests. The core is the
+      # vocabulary two programs agree on, so what proves it is the application
+      # that speaks it - a package that was never run is a package whose first
+      # user is running it for you.
+      - run: dotnet test
+
+      - name: Pack at the tagged version
+        run: |
+          VERSION="${GITHUB_REF_NAME#core-v}"
+          echo "packing $VERSION"
+          dotnet pack src/EmuSen.Pegasus.Core/EmuSen.Pegasus.Core.fsproj \
+            -c Release -o nupkgs -p:Version="$VERSION"
+
+      - name: Exchange the OIDC token for a short-lived key
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: RedQuE3n
+
+      # --skip-duplicate so re-running a failed job is not itself a failure:
+      # nuget.org will not accept a version twice, and that is the check working
+      # rather than something to work around.
+      - name: Push to NuGet.org
+        run: |
+          dotnet nuget push "nupkgs/*.nupkg" \
+            --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
