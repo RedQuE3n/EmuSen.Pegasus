@@ -173,6 +173,31 @@ first. This is untested — there is no case in the suite that switches notes on
 connected session, and the failure mode is therefore stated as a hazard rather
 than as an observed behaviour.
 
+## 4.1 Through a relay
+
+The same exchange, wrapped. A peer's frames are sealed under the join code
+exactly as before and addressed `ToHandle` instead of `Direct`; deliveries come
+back stamped `FromHandle`. Nothing about the conversation changes, which is why
+`Conversation` was split out of `Session` — the protocol is identical and only
+the transport differs, and two implementations of an identity handshake is how
+one of them ends up weaker than the other.
+
+**One socket, two key domains**, and this is the part to hold on to. Frames
+addressed to the relay — signing in, the roster — are sealed under a key derived
+from the server passphrase. Frames for a peer are sealed under the join code,
+which the relay does not have and cannot derive. The envelope is what keeps them
+apart.
+
+So what a relay removes is the address and the port, and **not** the join code.
+The code is the key your notes are sealed under; it still has to be agreed out
+of band. A test asserts the property that matters by inspecting everything a
+relay actually carried: none of it is readable with the server's own key.
+
+Either end may open a conversation, and neither has to speak first. A client
+that has said what note it is willing to be invited into will create a
+conversation on first contact from a stranger, because both ends open at once
+and an ordering rule cannot win that race.
+
 ## 5. What the encryption is and is not
 
 Every frame is sealed with AES-256-GCM under a key derived from the join code by

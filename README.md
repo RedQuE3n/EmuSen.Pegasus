@@ -78,7 +78,7 @@ switching notes while connected is not supported — disconnect first.
 
     dotnet test
 
-127 tests, all headless — no window is ever opened, including for the UI tests,
+131 tests, all headless — no window is ever opened, including for the UI tests,
 which drive a real Avalonia control tree under `Avalonia.Headless`. The suite
 covers frame and crypto round trips, torn-file recovery, compaction, caret
 arithmetic, property-based convergence under randomised interleavings, identity
@@ -120,8 +120,12 @@ measurements in `Pegasus_Design.md` §4.5 and §4.7.
 The core, the transport and the desktop client work. Remote presence is carried
 on the wire but not yet drawn — `docs/Pegasus_Sync.md` §4. Handles are proven: each peer signs a
 challenge with the key its fingerprint names, and a key that changes for a known
-handle is refused — `docs/Pegasus_Identity.md` §2 and §7. Connecting still needs
-an address, a port and a join code; a server that removes that is `EmuSen.Chariot`.
+handle is refused — `docs/Pegasus_Identity.md` §2 and §7.
+
+Connecting through a relay works and is tested — a peer is reached by handle,
+with no address and no port — but **the window does not offer it yet**, so the
+pairing ritual above is still what a user does. `docs/Pegasus_Sync.md` §4.1 is
+the transport; the server is `EmuSen.Chariot`.
 
 Deferred by choice: an always-on relay (the session abstraction is shaped to
 accept one as a peer that never disconnects), rich text, mobile, a browser

@@ -29,6 +29,7 @@
     <Compile Include="Store.fs" />
     <Compile Include="Workspace.fs" />
     <Compile Include="Session.fs" />
+    <Compile Include="Relay.fs" />
     <Compile Include="Controller.fs" />
     <Compile Include="SignIn.fs" />
     <Compile Include="Shell.fs" />

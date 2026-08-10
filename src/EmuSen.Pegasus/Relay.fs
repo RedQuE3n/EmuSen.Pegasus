@@ -1,0 +1,195 @@
+namespace EmuSen.Pegasus
+
+open System
+open System.Collections.Concurrent
+open System.IO
+open System.Net.Sockets
+open System.Threading
+
+/// Pegasus as a client of Chariot.
+///
+/// What this removes is the address and the port. You sign in to a server once,
+/// see who else is there, and reach them by handle. What it does NOT remove is
+/// the join code: that is the key your notes are sealed under, and Chariot
+/// never has it. The server learns who is talking to whom and how much; it
+/// cannot learn a word of what.
+///
+/// ONE SOCKET, TWO KEY DOMAINS, and everything here follows from that. Frames
+/// addressed to Chariot -- signing in, the roster -- are sealed under the key
+/// derived from the server passphrase. Frames for a peer are sealed under the
+/// join code and merely addressed through Chariot. The envelope is what keeps
+/// them apart: `Direct` is Chariot's, `ToHandle` and `FromHandle` are somebody
+/// else's and are passed through without this class being able to read them
+/// either, since it holds the join code only for the conversations it opened.
+type Relay(stream: Stream, self: Identity, passphrase: string) =
+    let key = Crypto.deriveKey passphrase
+    let cts = new CancellationTokenSource()
+    let rosterChanged = Event<PeerInfo[]>()
+    let faulted = Event<exn>()
+    let closed = Event<unit>()
+
+    // Serialises writes across every conversation sharing this socket, which is
+    // the price of multiplexing: two frames interleaved would decode as neither.
+    let writeLock = new SemaphoreSlim(1, 1)
+
+    /// One live conversation per correspondent, keyed by their folded handle,
+    /// because that is what a delivery is stamped with.
+    let conversations = ConcurrentDictionary<string, Conversation * byte[]>()
+
+    let mutable roster: PeerInfo[] = [||]
+
+    /// What to do when somebody addresses us first. Without this a
+    /// conversation could only ever be opened by whoever spoke first, and the
+    /// other side would silently drop the Hello -- which is not a race that can
+    /// be won by ordering, because both ends open at once.
+    let mutable accepting: (DocumentActor * byte[] * (PeerInfo -> byte[] -> Result<unit, string>)) option =
+        None
+
+    let writeSealed envelope payload =
+        task {
+            do! writeLock.WaitAsync cts.Token
+
+            try
+                do! Framing.writeSealed stream envelope payload cts.Token
+            finally
+                writeLock.Release() |> ignore
+        }
+
+    let say frame =
+        writeSealed Direct (Crypto.seal key (Codec.encode frame))
+
+    member _.Roster = roster
+    member _.RosterChanged = rosterChanged.Publish
+    member _.Faulted = faulted.Publish
+    member _.Closed = closed.Publish
+    member _.Self = self.Peer
+
+    /// The sign-in Chariot expects: it challenges, we say who we are and sign
+    /// what it sent. Identical to the peer exchange because it is the peer
+    /// exchange -- see Conversation, and Chariot_Design.md §9.1 in the
+    /// EmuSen.Chariot repository.
+    member _.SignInAsync(ct: CancellationToken) =
+        task {
+            let mutable signedIn = false
+
+            while not signedIn do
+                let! envelope, payload = Framing.readSealed stream ct
+
+                if envelope = Direct then
+                    match Codec.decode (Crypto.openSealed key payload) with
+                    | Challenge nonce ->
+                        do! say (Hello(self.Peer, self.PublicKey, Version.Protocol))
+                        do! say (Proof(Attestation.prove self nonce))
+                        signedIn <- true
+                    | _ -> ()
+        }
+
+    /// Says what to do with an unexpected correspondent: which note they are
+    /// joining, under which join code. A client that has not called this can
+    /// start conversations but cannot be invited into one.
+    member _.Accept(document: DocumentActor, joinCode: string, trust: PeerInfo -> byte[] -> Result<unit, string>) =
+        accepting <- Some(document, Crypto.deriveKey joinCode, trust)
+
+    /// Opens a conversation with somebody by name. The join code is the key the
+    /// two of you share and the server does not; it still has to be agreed out
+    /// of band, exactly as before.
+    member _.OpenAsync(peer: Handle, joinCode: string, document: DocumentActor, trust: PeerInfo -> byte[] -> Result<unit, string>) =
+        task {
+            let joinKey = Crypto.deriveKey joinCode
+
+            let send frame =
+                writeSealed (ToHandle peer) (Crypto.seal joinKey (Codec.encode frame))
+
+            let conversation = new Conversation(send, self, document, trust)
+            conversation.Faulted.Add faulted.Trigger
+            conversations[peer.Folded] <- (conversation, joinKey)
+            do! conversation.BeginAsync()
+            return conversation
+        }
+
+    /// Reads until the socket ends, handing each frame to whoever it belongs to.
+    ///
+    /// A frame from a correspondent nobody opened a conversation with is
+    /// dropped rather than treated as an error: the server may legitimately
+    /// deliver post from somebody this client has not opened a note with yet,
+    /// and one stranger's traffic must not take down a working session with
+    /// somebody else.
+    member _.RunAsync() =
+        task {
+            try
+                while not cts.IsCancellationRequested do
+                    let! envelope, payload = Framing.readSealed stream cts.Token
+
+                    match envelope with
+                    | Direct ->
+                        match Codec.decode (Crypto.openSealed key payload) with
+                        | Roster peers ->
+                            roster <- peers
+                            rosterChanged.Trigger peers
+                        | _ -> ()
+                    | FromHandle sender ->
+                        // Create one on first contact if we are open to being
+                        // invited, so neither end has to speak first.
+                        if not (conversations.ContainsKey sender.Folded) then
+                            match accepting with
+                            | Some(document, joinKey, trust) ->
+                                let send frame =
+                                    writeSealed (ToHandle sender) (Crypto.seal joinKey (Codec.encode frame))
+
+                                let conversation = new Conversation(send, self, document, trust)
+                                conversation.Faulted.Add faulted.Trigger
+                                conversations[sender.Folded] <- (conversation, joinKey)
+                                do! conversation.BeginAsync()
+                            | None -> ()
+
+                        match conversations.TryGetValue sender.Folded with
+                        | true, (conversation, joinKey) ->
+                            match Crypto.tryOpenSealed joinKey payload with
+                            | Some plain -> do! conversation.ReceiveAsync(Codec.decode plain)
+                            | None ->
+                                // Sealed under a code we do not share. Either
+                                // they are using a different one, or the relay
+                                // misrouted; neither is ours to crash over.
+                                ()
+                        | _ -> ()
+                    | ToHandle _ ->
+                        // A destination is a client's to write and a server's
+                        // to read. Nothing should route one back to us.
+                        raise (ProtocolError "the relay sent a frame addressed onward")
+            with
+            | :? OperationCanceledException -> ()
+            | :? EndOfStreamException -> ()
+            | :? IOException -> ()
+            | e -> faulted.Trigger e
+
+            closed.Trigger()
+        }
+
+    interface IDisposable with
+        member _.Dispose() =
+            cts.Cancel()
+
+            for conversation, _ in conversations.Values do
+                (conversation :> IDisposable).Dispose()
+
+            cts.Dispose()
+            writeLock.Dispose()
+            stream.Dispose()
+
+/// Connects to a Chariot.
+module RelayClient =
+
+    let connectAsync (host: string) (port: int) (passphrase: string) (self: Identity) (ct: CancellationToken) =
+        task {
+            let client = new TcpClient()
+            do! client.ConnectAsync(host, port, ct)
+            client.NoDelay <- true
+            let stream = client.GetStream()
+
+            // The same front-door handshake a peer does, for the same reason:
+            // prove you know the code before anything is allocated for you.
+            do! Handshake.asJoiner stream (Crypto.deriveKey passphrase) ct
+            let relay = new Relay(stream, self, passphrase)
+            do! relay.SignInAsync ct
+            return relay
+        }
