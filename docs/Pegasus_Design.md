@@ -451,6 +451,22 @@ the limitation below records: a version written in two places eventually
 disagrees with itself, and NuGet's caching turns that disagreement into a build
 failing on code that was just written.
 
+**Publishing from CI caught something a local `dotnet pack` never would have.**
+`FSharp.Core` was an implicit reference — the SDK adds it automatically at
+whatever version *that* SDK ships — so 0.2.0, built on a runner, declared a floor
+of `10.1.302`, where the identical source packed on the development machine
+declared `10.0.110`. The published artifact varied by who built it, which is not
+a property a package is allowed to have, and the first thing to notice was
+Chariot restoring it and reporting an NU1605 downgrade against a package it had
+just been told to trust.
+
+It is pinned explicitly now, and pinned *low*: a floor is a demand on every
+consumer, and nothing in the core uses anything newer. That is still one
+dependency, which is what §7's rule and the test in `CoreTests` are about —
+pinning changed the version, not the count. 0.2.1 is the corrected package;
+0.2.0 stays on nuget.org because published versions do not come back, and
+anything resolving it still works, it merely asks for more than it needs.
+
 Inside this repository the application takes a `ProjectReference` rather than
 the package. A packing step between editing a frame and running the tests would
 be paid on every change and would buy a version number nobody in this repository

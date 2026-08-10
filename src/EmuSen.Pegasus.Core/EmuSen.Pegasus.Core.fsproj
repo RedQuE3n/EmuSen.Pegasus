@@ -46,7 +46,7 @@
          somewhere to keep a key. A consumer on 0.1.0 cannot talk to one on
          0.2.0 — Hello says so in the first frame rather than letting it be
          discovered as a decode failure further down. -->
-    <Version>0.2.0</Version>
+    <Version>0.2.1</Version>
     <Authors>Tristan Pelland</Authors>
     <Description>Wire types, frame codec, sealed envelope and identity keys shared by Pegasus and Chariot.</Description>
     <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
@@ -57,6 +57,25 @@
 
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- FSharp.Core pinned rather than left implicit, and this was found the
+         hard way: the SDK adds it automatically at whatever version that SDK
+         ships, so the PUBLISHED package declared a floor of 10.1.302 when built
+         by a CI runner and 10.0.110 when built here. The artifact varied by who
+         built it, which is not a property a package may have — and the first
+         consumer to notice was Chariot, with a NU1605 downgrade warning against
+         a package it had just been told to trust.
+
+         Pinned LOW on purpose. A floor is a demand on every consumer, and
+         nothing here uses anything newer; a consumer on a later SDK satisfies
+         >= 10.0.110 with the version it already has, while the reverse would
+         force an upgrade for no reason.
+
+         This is still the core's ONE dependency, which is the rule the test in
+         CoreTests asserts. Pinning it changes the version, not the count. -->
+    <PackageReference Include="FSharp.Core" Version="10.0.110" />
   </ItemGroup>
 
   <ItemGroup>
