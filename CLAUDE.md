@@ -6,7 +6,7 @@ as much as the code, and it must survive somebody reading it critically.
 
 ## The man pages
 
-`docs/` is the man pages. Four of them, section-numbered:
+`docs/` is the man pages. Five of them, section-numbered:
 
 | Man page | Covers |
 |---|---|
@@ -14,6 +14,7 @@ as much as the code, and it must survive somebody reading it critically.
 | `docs/Pegasus_Format.md` | The `.pegasus` file, append-only log, compaction, durability, the `.md` projection |
 | `docs/Pegasus_Sync.md` | Topology, pairing, frame layout, the exchange, what the encryption is and is not |
 | `docs/Pegasus_Identity.md` | Handles, the identity store, the password envelope, the identity proof, trust on first use |
+| `docs/Pegasus_Setup.md` | Installing the released binaries, getting past unsigned-code warnings, running Chariot as a service, the network, on-disk state |
 
 `README.md` is the front door for a reader who has not opened the code. It
 summarises; it never becomes the place a decision is recorded.

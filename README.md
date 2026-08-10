@@ -56,6 +56,12 @@ submodule or a vendored copy, and what the arrangement does not cover.
 
     dotnet run --project src/EmuSen.Pegasus
 
+That is the source route. If you would rather download a program than build one,
+the releases carry self-contained builds of Pegasus and of the relay for Linux,
+macOS and Windows, and `docs/Pegasus_Setup.md` covers installing them, standing a
+relay up as a service, and what has to be reachable on the network. The rest of
+this section is the quick tour either way.
+
 Pegasus opens on a sign-in window. Pick a handle — `RedQuE3n`, the name your
 peer will see you as — and a password, and click **Create**; after that,
 **Sign in** with the same pair. The password unlocks a keypair kept on your own
@@ -142,6 +148,7 @@ up.
 | `docs/Pegasus_Format.md` | The `.pegasus` file, its recovery argument, and exactly what durability is promised |
 | `docs/Pegasus_Sync.md` | Pairing, frame layout, and an honest account of what the encryption is not |
 | `docs/Pegasus_Identity.md` | Handles, the password-sealed keypair on disk, and exactly what a sign-in proves |
+| `docs/Pegasus_Setup.md` | Installing the released binaries, running a relay as a service, what has to be reachable, and where state is kept |
 
 Two findings there are worth flagging for anyone else building on `YDotNet`
 0.6.0: the default `Doc()` constructor draws client ids from roughly six bits and
