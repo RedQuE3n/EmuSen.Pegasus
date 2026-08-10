@@ -476,6 +476,29 @@ let ``Pegasus references the toolkit and its own core, and nothing else of EmuSe
     )
 
 [<Fact>]
+let ``the toolkit brings nothing of EmuSen with it`` () =
+    // The transitive half of the claim above, and the one that decides how many
+    // packages this repository has to hand-carry. LunaP used to declare
+    // EmuSen.Galaxia and EmuSen.Cauldron as hard dependencies, so both had to be
+    // packed and copied into local-packages/ beside it; it now declares Avalonia
+    // and nothing else. See Pegasus_Design.md §7.1, and EmuSen_LunaP.md §19 in
+    // EmuSen-Project for what moved and where.
+    //
+    // A limitation this shares with EmuSen's own version of the guard, found
+    // there by sabotaging it and watching it pass: GetReferencedAssemblies
+    // cannot see a dependency used only for `const` values, because the
+    // compiler inlines a constant and drops the reference. A const carries no
+    // behaviour, so nothing it inlines can drag a library in, but the guard
+    // covers less than it looks like it does.
+    let referenced =
+        typeof<EmuSen.LunaP.Windowing.ToolWindow>.Assembly.GetReferencedAssemblies()
+        |> Array.map _.Name
+        |> Array.filter (fun n -> n.StartsWith("EmuSen.", StringComparison.Ordinal))
+        |> Array.distinct
+
+    Assert.True(referenced.Length = 0, $"""the toolkit still carries: {String.Join(", ", referenced)}""")
+
+[<Fact>]
 let ``the core carries nothing a server would have to take with it`` () =
     // This is what the split has to earn, and the only assertion that will
     // notice if it stops earning it.

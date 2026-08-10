@@ -375,15 +375,27 @@ other projects consume it. Four ways to cross that boundary were considered:
   silently dropped `UseX11` on Wayland.
 - **Publish LunaP as a NuGet package.** Adopted.
 
-`EmuSen.LunaP` is packed at 0.1.0 together with the two dependency-free leaves it
-names, `EmuSen.Galaxia` and `EmuSen.Cauldron`, because a consumer outside that
-repository cannot resolve a `ProjectReference`.
+`EmuSen.LunaP` is packed at 0.1.0, and **it is the only package this repository
+hand-carries.** That is a correction: it used to be three. LunaP declared
+`EmuSen.Galaxia` and `EmuSen.Cauldron` as hard dependencies, so both had to be
+packed and copied here alongside it, and a consumer outside EmuSen-Project
+cannot resolve a `ProjectReference` to either.
 
-This does not weaken LunaP's layering rule; it enforces it. That rule says LunaP
-may reference Avalonia, Galaxia and Cauldron and nothing else, and its purpose is
-to stop a launcher acquiring an entire emulator by accident. A package cannot
-reach back up into a core at all, so the constraint that was a comment in a
-`.csproj` is now a property of the artifact.
+They are gone because LunaP stopped naming them. `EmuSen_LunaP.md` §19 in
+EmuSen-Project is the account; the short version is that a settings seam
+replaced Galaxia's `ConfigFile`, and the two files that genuinely knew about
+EmuSen — a console keyboard map and a telemetry dashboard — moved to the
+projects that own those subjects. LunaP's nuspec now declares Avalonia and
+nothing else, and a test there asserts the assembly references nothing of
+EmuSen's at all.
+
+This does not weaken LunaP's layering rule; it enforces it. That rule now says
+LunaP may reference Avalonia and nothing else, and its purpose is to stop a
+launcher acquiring an entire emulator by accident. A package cannot reach back
+up into a core, so the constraint that was a comment in a `.csproj` is a
+property of the artifact — and the rule tightened because the toolkit is going
+to its own repository, where "can anybody outside resolve this" replaces "does
+this cost a consumer a core" as the question being asked.
 
 Two limitations, stated rather than discovered later:
 
@@ -391,11 +403,17 @@ Two limitations, stated rather than discovered later:
   resolves relative to itself. It is populated by `dotnet pack` in EmuSen-Project.
   GitHub Packages is the intended destination and the reason this is a folder
   today is only that the packages have not been pushed there yet.
-- `EmuSen.Galaxia` ships its catalogue schema as `.sql` files copied to the build
-  output. Those do **not** travel in the package, because they are `None` items
-  rather than packaged content. Pegasus does not use the catalogue, so this costs
-  nothing here; anyone packaging Galaxia for a consumer that *does* want the
-  catalogue has to fix it first.
+- Every package involved is stamped `0.1.0` and stays there. NuGet caches by id
+  and version, so repacking after a change does not propagate and a build fails
+  on code that was just written as though it did not exist. The workaround is to
+  delete the cached folder under `~/.nuget/packages/`; the fix is version
+  stamping, which is deliberately deferred. `EmuSen.Chariot`'s `NuGet.config`
+  records the trap where somebody will hit it.
+
+A limitation that used to be here and no longer applies: `EmuSen.Galaxia` ships
+its catalogue schema as `.sql` files that do not travel in its package, which
+mattered while Galaxia was one of the three packages carried here. It is not
+carried any more.
 
 A licence consequence follows and is worth naming: EmuSen is GPL-3.0, so the
 packages are GPL-3.0, so Pegasus is a derivative work of them. This repository's

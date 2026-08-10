@@ -36,13 +36,15 @@ it that way.
 ## Building
 
 Pegasus depends on `EmuSen.LunaP`, the shared Avalonia toolkit, which lives in
-the EmuSen repository and is consumed here as a NuGet package. Until those
-packages are on GitHub Packages, `NuGet.config` points at `local-packages/`, a
-folder feed you populate from a checkout of EmuSen-Project:
+the EmuSen repository and is consumed here as a NuGet package. Until it is on
+GitHub Packages, `NuGet.config` points at `local-packages/`, a folder feed you
+populate from a checkout of EmuSen-Project:
 
-    dotnet pack EmuSen.Cauldron/EmuSen.Cauldron.csproj -c Release -o <path>/Pegasus/local-packages
-    dotnet pack EmuSen.Galaxia/EmuSen.Galaxia.csproj   -c Release -o <path>/Pegasus/local-packages
-    dotnet pack EmuSen.LunaP/EmuSen.LunaP.csproj       -c Release -o <path>/Pegasus/local-packages
+    dotnet pack EmuSen.LunaP/EmuSen.LunaP.csproj -c Release -o <path>/Pegasus/local-packages
+
+That is one package, and it used to be three: LunaP declared `EmuSen.Galaxia`
+and `EmuSen.Cauldron` as hard dependencies, so both had to be carried here too.
+It now declares Avalonia and nothing else — `docs/Pegasus_Design.md` §7.1.
 
 Then:
 
@@ -100,7 +102,7 @@ conversation holds the document that was open when it started.
 
     dotnet test
 
-149 tests, all headless — no window is ever opened, including for the UI tests,
+150 tests, all headless — no window is ever opened, including for the UI tests,
 which drive a real Avalonia control tree under `Avalonia.Headless`. The suite
 covers frame and crypto round trips, torn-file recovery, compaction, caret
 arithmetic, property-based convergence under randomised interleavings, identities
