@@ -11,10 +11,7 @@ open EmuSen.Pegasus
 // Codec
 // ---------------------------------------------------------------------------
 
-let private peer =
-    { Id = PeerId "abc123"
-      Name = "tristan"
-      Color = "#8844ff" }
+let private peer = Peers.named "tristan"
 
 [<Fact>]
 let ``every frame case survives a codec round trip`` () =

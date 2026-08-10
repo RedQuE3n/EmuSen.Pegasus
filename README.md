@@ -51,9 +51,15 @@ submodule or a vendored copy, and what the arrangement does not cover.
 
     dotnet run --project src/EmuSen.Pegasus
 
-One person clicks **Host** and reads out the address, the port and the join code.
-The other types all three in and clicks **Join**. The port is assigned by the
-operating system and differs every session.
+Pegasus opens on a sign-in window. Pick a handle — `RedQuE3n`, the name your
+peer will see you as — and a password, and click **Create**; after that,
+**Sign in** with the same pair. The password unlocks a keypair kept on your own
+machine and is never sent anywhere. `docs/Pegasus_Identity.md` §2 is worth
+reading before you trust a handle: it is carried on the wire but not yet proven.
+
+Then one person clicks **Host** and reads out the address, the port and the join
+code. The other types all three in and clicks **Join**. The port is assigned by
+the operating system and differs every session.
 
 Notes live under `SpecialFolder.LocalApplicationData` — `~/.local/share/Pegasus/workspace`
 on Linux — one `.pegasus` file each, with a plain `.md` projection beside every
@@ -68,18 +74,21 @@ switching notes while connected is not supported — disconnect first.
 
     dotnet test
 
-56 tests, all headless — no window is ever opened, including for the UI tests,
+85 tests, all headless — no window is ever opened, including for the UI tests,
 which drive a real Avalonia control tree under `Avalonia.Headless`. The suite
 covers frame and crypto round trips, torn-file recovery, compaction, caret
-arithmetic, property-based convergence under randomised interleavings, two peers
-over a real loopback socket, and the full path from one peer's mailbox to the
-other's rendered editor.
+arithmetic, property-based convergence under randomised interleavings, identity
+files and their password envelope, two peers over a real loopback socket, and
+the full path from one peer's mailbox to the other's rendered editor.
 
-Two of those tests are guards that were made to fail on purpose before being
-trusted: one asserts every control in the window is actually templated, and one
-asserts the assembly references no EmuSen package but the toolkit.
-`docs/Pegasus_Design.md` §11 explains what shipped before the first of them
-existed.
+Several of those tests are guards that were made to fail on purpose before being
+trusted: two assert every control in a window is actually templated, one asserts
+the assembly references no EmuSen package but the toolkit, and one asserts the
+private key never reaches the identity file in the clear. The last of those
+passed against a deliberately unsealed write on its first attempt — it compared
+raw bytes to a base64 file — and `docs/Pegasus_Identity.md` §3 records the
+correction. `docs/Pegasus_Design.md` §11 explains what shipped before the first
+of them existed.
 
 ## Documentation
 
@@ -88,6 +97,7 @@ existed.
 | `docs/Pegasus_Design.md` | Why a CRDT, why F#, the Phase 0 evidence — including two YDotNet defects found and worked around — and why the toolkit arrives as a package |
 | `docs/Pegasus_Format.md` | The `.pegasus` file, its recovery argument, and exactly what durability is promised |
 | `docs/Pegasus_Sync.md` | Pairing, frame layout, and an honest account of what the encryption is not |
+| `docs/Pegasus_Identity.md` | Handles, the password-sealed keypair on disk, and exactly what a sign-in proves |
 
 Two findings there are worth flagging for anyone else building on `YDotNet`
 0.6.0: the default `Doc()` constructor draws client ids from roughly six bits and
@@ -98,7 +108,9 @@ measurements in `Pegasus_Design.md` §4.5 and §4.7.
 ## Status
 
 The core, the transport and the desktop client work. Remote presence is carried
-on the wire but not yet drawn — `docs/Pegasus_Sync.md` §4.
+on the wire but not yet drawn — `docs/Pegasus_Sync.md` §4. Handles are carried
+but not yet proven; a signed handshake and pinned keys are the next pass —
+`docs/Pegasus_Identity.md` §2 and §7.
 
 Deferred by choice: an always-on relay (the session abstraction is shaped to
 accept one as a peer that never disconnects), rich text, mobile, a browser

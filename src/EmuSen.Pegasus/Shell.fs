@@ -25,7 +25,7 @@ type PegasusWindow(pad: Notepad) as this =
     inherit ToolWindow()
 
     let notes = ListBox(MinWidth = 190.0)
-    let newName = TextBox(Watermark = "new note", Width = 150.0)
+    let newName = TextBox(PlaceholderText = "new note", Width = 150.0)
 
     let editor =
         TextBox(
@@ -37,10 +37,17 @@ type PegasusWindow(pad: Notepad) as this =
             VerticalContentAlignment = VerticalAlignment.Top
         )
 
-    let address = TextBox(Watermark = "address", Width = 130.0, Text = "127.0.0.1")
-    let port = TextBox(Watermark = "port", Width = 70.0)
-    let code = TextBox(Watermark = "join code", Width = 170.0)
+    let address = TextBox(PlaceholderText = "address", Width = 130.0, Text = "127.0.0.1")
+    let port = TextBox(PlaceholderText = "port", Width = 70.0)
+    let code = TextBox(PlaceholderText = "join code", Width = 170.0)
     let status = Ui.Hint "offline"
+
+    /// Handle and the leading half of the fingerprint, tinted with the colour
+    /// both are derived from. See Pegasus_Identity.md §6.
+    let whoami =
+        let label = Ui.Hint $"{pad.Self.Handle.Value}  ·  {pad.Self.Id.Value[..7]}"
+        label.Foreground <- SolidColorBrush(Color.Parse pad.Self.Color)
+        label
 
     // Set while a control is being rewritten from state, so the change events
     // it raises are not fed straight back in. Without the selection guard the
@@ -69,7 +76,8 @@ type PegasusWindow(pad: Notepad) as this =
             | Offline -> "offline"
             | Waiting(c, p) -> $"waiting on port {p}  ·  code {c}"
             | Hosting(c, p) -> $"hosting on port {p}  ·  code {c}"
-            | Connected peer -> $"connected to {peer}"
+            | Linking -> "connecting..."
+            | Connected peer -> $"connected to {peer.Value}"
             | Failed reason -> $"failed: {reason}"
 
         status.Foreground <-
@@ -77,7 +85,8 @@ type PegasusWindow(pad: Notepad) as this =
             | Connected _ -> SolidColorBrush Colors.SeaGreen
             | Failed _ -> SolidColorBrush Colors.IndianRed
             | Waiting _
-            | Hosting _ -> SolidColorBrush Colors.Goldenrod
+            | Hosting _
+            | Linking -> SolidColorBrush Colors.Goldenrod
             | Offline -> SolidColorBrush Colors.Gray
 
     /// The document changes on a mailbox thread; Avalonia may only be touched
@@ -153,12 +162,13 @@ type PegasusWindow(pad: Notepad) as this =
             )
 
         let sidebar = Ui.Stack(6.0, Ui.Row(4.0, newName, addNote), notes)
+        let footer = Ui.Row(14.0, whoami, status)
 
         DockPanel.SetDock(connection, Dock.Top)
-        DockPanel.SetDock(status, Dock.Bottom)
+        DockPanel.SetDock(footer, Dock.Bottom)
         DockPanel.SetDock(sidebar, Dock.Left)
 
-        this.Content <- Ui.Dock(connection, status, sidebar, editor)
+        this.Content <- Ui.Dock(connection, footer, sidebar, editor)
 
         showStatus pad.Connection
         refreshNotes ()

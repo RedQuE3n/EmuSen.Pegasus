@@ -7,11 +7,6 @@ open Xunit
 open EmuSen.Pegasus
 open EmuSen.Pegasus
 
-let private peer name colour =
-    { Id = PeerId.New()
-      Name = name
-      Color = colour }
-
 /// Waits for a condition rather than sleeping a fixed time, so the suite is not
 /// timing-fragile on a loaded machine.
 let private waitFor (timeoutMs: int) (condition: unit -> bool) =
@@ -28,8 +23,8 @@ type private Pair() =
     let code = Crypto.newJoinCode ()
     let alice = new DocumentActor()
     let bob = new DocumentActor()
-    let aliceInfo = peer "alice" "#ff0000"
-    let bobInfo = peer "bob" "#0000ff"
+    let aliceInfo = Peers.named "alice"
+    let bobInfo = Peers.named "bob"
     let host = new Host(0, code, aliceInfo, alice)
     do host.Start()
 
@@ -83,12 +78,12 @@ let ``a peer that connects late receives the existing document`` () =
     alice.Insert(0, "written before bob arrived")
     use bob = new DocumentActor()
 
-    use host = new Host(0, code, peer "alice" "#f00", alice)
+    use host = new Host(0, code, Peers.named "alice", alice)
     host.Start()
     let accepted = host.AcceptAsync CancellationToken.None
 
     use joiner =
-        (Client.connectAsync "127.0.0.1" host.Port code (peer "bob" "#00f") bob CancellationToken.None)
+        (Client.connectAsync "127.0.0.1" host.Port code (Peers.named "bob") bob CancellationToken.None)
             .GetAwaiter()
             .GetResult()
 
@@ -122,7 +117,7 @@ let ``presence carries a peer's caret to the other side`` () =
     Assert.True(waitFor 5000 (fun () -> seen.Count > 0))
     Assert.Equal(7, seen[0].Caret)
     Assert.Equal(3, seen[0].Anchor)
-    Assert.Equal("bob", seen[0].Peer.Name)
+    Assert.Equal("bob", seen[0].Peer.Handle.Value)
 
 [<Fact>]
 let ``the peers exchange identities on connect`` () =
@@ -130,20 +125,20 @@ let ``the peers exchange identities on connect`` () =
     // subscriber attaching after the session started would never see it.
     use pair = new Pair()
     Assert.True(waitFor 5000 (fun () -> pair.JoinerSession.RemotePeer.IsSome))
-    Assert.Equal("alice", pair.JoinerSession.RemotePeer.Value.Name)
+    Assert.Equal("alice", pair.JoinerSession.RemotePeer.Value.Handle.Value)
     Assert.True(waitFor 5000 (fun () -> pair.HostSession.RemotePeer.IsSome))
-    Assert.Equal("bob", pair.HostSession.RemotePeer.Value.Name)
+    Assert.Equal("bob", pair.HostSession.RemotePeer.Value.Handle.Value)
 
 [<Fact>]
 let ``a wrong join code is refused at the handshake`` () =
     use alice = new DocumentActor()
     use bob = new DocumentActor()
-    use host = new Host(0, "7-lantern-quartz", peer "alice" "#f00", alice)
+    use host = new Host(0, "7-lantern-quartz", Peers.named "alice", alice)
     host.Start()
     let accepted = host.AcceptAsync CancellationToken.None
 
     let connecting =
-        Client.connectAsync "127.0.0.1" host.Port "7-lantern-cobalt" (peer "bob" "#00f") bob CancellationToken.None
+        Client.connectAsync "127.0.0.1" host.Port "7-lantern-cobalt" (Peers.named "bob") bob CancellationToken.None
 
     // The joiner answers the challenge wrongly, so the host rejects it. The
     // joiner itself cannot tell yet -- it learns when the stream closes.

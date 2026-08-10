@@ -21,13 +21,22 @@
     <Compile Include="Types.fs" />
     <Compile Include="Codec.fs" />
     <Compile Include="Crypto.fs" />
+    <Compile Include="Identity.fs" />
     <Compile Include="Document.fs" />
     <Compile Include="Store.fs" />
     <Compile Include="Workspace.fs" />
     <Compile Include="Session.fs" />
     <Compile Include="Controller.fs" />
+    <Compile Include="SignIn.fs" />
     <Compile Include="Shell.fs" />
     <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- So the suite can assert the exported private key does not appear in the
+         identity file, which is the whole point of that guard. See
+         docs/Pegasus_Identity.md §3. -->
+    <InternalsVisibleTo Include="EmuSen.Pegasus.Tests" />
   </ItemGroup>
 
   <ItemGroup>

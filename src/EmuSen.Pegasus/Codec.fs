@@ -42,17 +42,22 @@ module Codec =
 
     let private writePeer (w: BinaryWriter) (p: PeerInfo) =
         w.Write p.Id.Value
-        w.Write p.Name
+        w.Write p.Handle.Value
         w.Write p.Color
 
+    /// A handle arriving from the wire is validated here, so the grammar in
+    /// Pegasus_Identity.md §1 holds for remote peers too.
     let private readPeer (r: BinaryReader) : PeerInfo =
         let id = r.ReadString()
-        let name = r.ReadString()
+        let handle = r.ReadString()
         let color = r.ReadString()
 
-        { Id = PeerId id
-          Name = name
-          Color = color }
+        match Handle.TryParse handle with
+        | Error why -> raise (ProtocolError $"peer sent an unusable handle: {why}")
+        | Ok parsed ->
+            { Id = PeerId id
+              Handle = parsed
+              Color = color }
 
     /// Serialise a frame to its plaintext body. Encryption and length-prefixing
     /// happen above this, in Pegasus.Net.

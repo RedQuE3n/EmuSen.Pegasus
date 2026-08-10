@@ -28,6 +28,11 @@ words were chosen to be unambiguous when spoken.
 
 The code is case- and whitespace-insensitive, because it will be retyped by hand.
 
+Signing in is not part of pairing and does not replace the code. A handle
+identifies you to the other peer; the join code is still the only thing
+gating the connection. `Pegasus_Identity.md` §2 explains why a password could
+not have taken that job without a server to check it against.
+
 The listening port is chosen by the operating system, not by the user, and is
 displayed alongside the code. It therefore differs every session, which is a
 nuisance for anyone trying to forward a fixed port and is a further reason §5
@@ -37,7 +42,7 @@ recommends a tunnel instead.
 
 A frame is a tag byte followed by a payload:
 
-    0  Hello       peer id, display name, colour  (length-prefixed UTF-8 strings)
+    0  Hello       peer id, handle, colour  (length-prefixed UTF-8 strings)
     1  SyncStep1   raw Yjs state vector
     2  SyncStep2   raw Yjs update answering a state vector
     3  Update      raw Yjs update
@@ -46,6 +51,12 @@ A frame is a tag byte followed by a payload:
 
 Strings use `BinaryWriter`'s 7-bit-encoded length prefix. Multi-byte integers are
 little endian.
+
+The peer id is a fingerprint of the sender's public key and the handle is the
+name they signed in under, both described in `Pegasus_Identity.md` §6 and §1.
+Neither is proven: nothing in this exchange demonstrates that the sender holds
+the key the fingerprint names. `Pegasus_Identity.md` §2 states that plainly and
+is the section to read before trusting a displayed handle.
 
 On the wire each frame is sealed (§5) and then length-prefixed with an int32.
 

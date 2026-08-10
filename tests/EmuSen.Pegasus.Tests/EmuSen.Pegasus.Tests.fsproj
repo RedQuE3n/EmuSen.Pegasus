@@ -9,7 +9,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="Peers.fs" />
     <Compile Include="CoreTests.fs" />
+    <Compile Include="IdentityTests.fs" />
     <Compile Include="NetTests.fs" />
     <Compile Include="UiTests.fs" />
   </ItemGroup>

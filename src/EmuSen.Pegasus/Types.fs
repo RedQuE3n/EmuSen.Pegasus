@@ -10,11 +10,47 @@ module Version =
     [<Literal>]
     let FileSchema = 1uy
 
+/// Derived from a public key, not drawn, so it survives a restart. See
+/// Pegasus_Identity.md §6.
 type PeerId =
     | PeerId of string
 
-    static member New() = PeerId(Guid.NewGuid().ToString("N"))
     member this.Value = let (PeerId v) = this in v
+
+/// A login name. Grammar, and why comparison folds case, in
+/// Pegasus_Identity.md §1.
+[<CustomEquality; NoComparison>]
+type Handle =
+    private
+    | Handle of string
+
+    member this.Value = let (Handle v) = this in v
+    member this.Folded = this.Value.ToLowerInvariant()
+
+    override this.Equals(other) =
+        match other with
+        | :? Handle as h -> this.Folded = h.Folded
+        | _ -> false
+
+    override this.GetHashCode() = this.Folded.GetHashCode()
+
+    static member TryParse(raw: string) =
+        let value = (if isNull raw then "" else raw).Trim()
+        let allowed c = Char.IsAsciiLetterOrDigit c || c = '-' || c = '_'
+
+        if value.Length < 3 || value.Length > 20 then
+            Error "a handle is 3 to 20 characters long"
+        elif not (Char.IsAsciiLetter value[0]) then
+            Error "a handle starts with a letter"
+        elif not (Seq.forall allowed value) then
+            Error "a handle holds only letters, digits, hyphen and underscore"
+        else
+            Ok(Handle value)
+
+    static member Parse(raw: string) =
+        match Handle.TryParse raw with
+        | Ok h -> h
+        | Error why -> invalidArg (nameof raw) why
 
 type NoteId =
     | NoteId of string
@@ -22,9 +58,10 @@ type NoteId =
     static member New() = NoteId(Guid.NewGuid().ToString("N"))
     member this.Value = let (NoteId v) = this in v
 
+/// The handle is asserted rather than proven -- Pegasus_Identity.md §2.
 type PeerInfo =
     { Id: PeerId
-      Name: string
+      Handle: Handle
       /// "#rrggbb", used to tint this peer's caret.
       Color: string }
 

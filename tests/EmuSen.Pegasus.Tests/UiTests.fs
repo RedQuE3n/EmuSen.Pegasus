@@ -44,6 +44,44 @@ let private editorOf (window: Window) =
         | _ -> None)
     |> Seq.head
 
+let private boxWith (window: Window) (placeholder: string) =
+    window.GetLogicalDescendants()
+    |> Seq.pick (fun c ->
+        match box c with
+        | :? TextBox as t when t.PlaceholderText = placeholder -> Some t
+        | _ -> None)
+
+let private buttonSaying (window: Window) (label: string) =
+    window.GetLogicalDescendants()
+    |> Seq.pick (fun c ->
+        match box c with
+        | :? Button as b when string b.Content = label -> Some b
+        | _ -> None)
+
+let private click (button: Button) =
+    button.RaiseEvent(Interactivity.RoutedEventArgs Button.ClickEvent)
+    Dispatcher.UIThread.RunJobs()
+
+let private showsText (window: Window) (text: string) =
+    window.GetLogicalDescendants()
+    |> Seq.exists (fun c ->
+        match box c with
+        | :? TextBlock as t -> t.Text = text
+        | _ -> false)
+
+let private untemplatedIn (window: Window) =
+    window.Measure(Size(1000.0, 680.0))
+    window.Arrange(Rect(0.0, 0.0, 1000.0, 680.0))
+    Dispatcher.UIThread.RunJobs()
+
+    window.GetLogicalDescendants()
+    |> Seq.choose (fun c ->
+        match box c with
+        | :? TemplatedControl as t when isNull t.Template -> Some(t.GetType().Name)
+        | _ -> None)
+    |> Seq.distinct
+    |> Seq.toArray
+
 let private pump (predicate: unit -> bool) =
     let deadline = DateTime.UtcNow.AddSeconds 5.0
 
@@ -57,7 +95,7 @@ let private pump (predicate: unit -> bool) =
 [<Fact>]
 let ``the window renders an editor bound to the open note`` () =
     started.Force()
-    use pad = new Notepad(tempRoot (), "alice")
+    use pad = new Notepad(tempRoot (), Peers.named "alice")
     pad.CreateNote "scratch" |> ignore
 
     let window = Shell.PegasusWindow pad
@@ -78,24 +116,14 @@ let ``every control in the window is actually templated`` () =
     // passed. Applying a template is the thing that was missing, so it is the
     // thing asserted. See Pegasus_Design.md §11.
     started.Force()
-    use pad = new Notepad(tempRoot (), "alice")
+    use pad = new Notepad(tempRoot (), Peers.named "alice")
     pad.CreateNote "scratch" |> ignore
 
     let window = Shell.PegasusWindow pad
     window.Show()
     Dispatcher.UIThread.RunJobs()
-    window.Measure(Size(1000.0, 680.0))
-    window.Arrange(Rect(0.0, 0.0, 1000.0, 680.0))
-    Dispatcher.UIThread.RunJobs()
 
-    let untemplated =
-        window.GetLogicalDescendants()
-        |> Seq.choose (fun c ->
-            match box c with
-            | :? TemplatedControl as t when isNull t.Template -> Some(t.GetType().Name)
-            | _ -> None)
-        |> Seq.distinct
-        |> Seq.toArray
+    let untemplated = untemplatedIn window
 
     Assert.True(
         untemplated.Length = 0,
@@ -109,7 +137,7 @@ let ``the window is a LunaP ToolWindow and carries a placement key`` () =
     // The point of the move: chrome, theme and geometry come from the shared
     // toolkit rather than being rebuilt here. Pegasus_Design.md §8.
     started.Force()
-    use pad = new Notepad(tempRoot (), "alice")
+    use pad = new Notepad(tempRoot (), Peers.named "alice")
     pad.CreateNote "scratch" |> ignore
     let window = Shell.PegasusWindow pad
     Assert.IsAssignableFrom<EmuSen.LunaP.Windowing.ToolWindow>(window) |> ignore
@@ -119,8 +147,8 @@ let ``the window is a LunaP ToolWindow and carries a placement key`` () =
 [<Fact>]
 let ``a remote edit appears in the rendered editor`` () =
     started.Force()
-    use hostPad = new Notepad(tempRoot (), "alice")
-    use joinPad = new Notepad(tempRoot (), "bob")
+    use hostPad = new Notepad(tempRoot (), Peers.named "alice")
+    use joinPad = new Notepad(tempRoot (), Peers.named "bob")
     hostPad.CreateNote "shared" |> ignore
     joinPad.CreateNote "shared" |> ignore
 
@@ -148,13 +176,98 @@ let ``a note survives closing and reopening the notepad`` () =
     let root = tempRoot ()
 
     let noteId =
-        use pad = new Notepad(root, "alice")
+        use pad = new Notepad(root, Peers.named "alice")
         let entry = pad.CreateNote "durable"
         pad.Edit "this must still be here"
         pad.Checkpoint()
         entry.Id
 
-    use reopened = new Notepad(root, "alice")
+    use reopened = new Notepad(root, Peers.named "alice")
     reopened.Open noteId
     Assert.Equal("this must still be here", reopened.Text)
     Assert.Contains(reopened.Notes, fun n -> n.Name = "durable")
+
+// ---------------------------------------------------------------------------
+// Sign-in
+// ---------------------------------------------------------------------------
+
+[<Fact>]
+let ``every control in the sign-in window is actually templated`` () =
+    // The same guard as the main window, because the sign-in window is now the
+    // first thing a user sees and a blank one would be indistinguishable from a
+    // hang. See Pegasus_Design.md §11.
+    started.Force()
+    let window = SignIn.SignInWindow(tempRoot ())
+    window.Show()
+    Dispatcher.UIThread.RunJobs()
+
+    let untemplated = untemplatedIn window
+
+    Assert.True(
+        untemplated.Length = 0,
+        $"""controls with no template, so they render blank: {String.Join(", ", untemplated)}"""
+    )
+
+    window.Close()
+
+[<Fact>]
+let ``creating an identity through the window signs in as that handle`` () =
+    started.Force()
+    let root = tempRoot ()
+    let window = SignIn.SignInWindow root
+    let admitted = ResizeArray<Identity>()
+    window.SignedIn.Add admitted.Add
+    window.Show()
+    Dispatcher.UIThread.RunJobs()
+
+    (boxWith window "handle").Text <- "RedQuE3n"
+    (boxWith window "password").Text <- "hunter2"
+    click (buttonSaying window "Create")
+
+    Assert.Equal(1, admitted.Count)
+    Assert.Equal("RedQuE3n", admitted[0].Handle.Value)
+    Assert.True(IdentityStore.exists root (Handle.Parse "redque3n"))
+
+    (admitted[0] :> IDisposable).Dispose()
+    window.Close()
+
+[<Fact>]
+let ``a wrong password is refused at the window, not merely in the store`` () =
+    started.Force()
+    let root = tempRoot ()
+
+    match IdentityStore.create root (Handle.Parse "alice") "right" with
+    | Ok created -> (created :> IDisposable).Dispose()
+    | Error e -> failwith e.Message
+
+    let window = SignIn.SignInWindow root
+    let admitted = ResizeArray<Identity>()
+    window.SignedIn.Add admitted.Add
+    window.Show()
+    Dispatcher.UIThread.RunJobs()
+
+    (boxWith window "handle").Text <- "alice"
+    (boxWith window "password").Text <- "wrong"
+    click (buttonSaying window "Sign in")
+
+    Assert.Empty admitted
+    Assert.True(showsText window "wrong password", "the window did not say why it refused")
+    window.Close()
+
+[<Fact>]
+let ``a malformed handle is refused before the store is consulted`` () =
+    started.Force()
+    let root = tempRoot ()
+    let window = SignIn.SignInWindow root
+    let admitted = ResizeArray<Identity>()
+    window.SignedIn.Add admitted.Add
+    window.Show()
+    Dispatcher.UIThread.RunJobs()
+
+    (boxWith window "handle").Text <- "9lives"
+    (boxWith window "password").Text <- "whatever"
+    click (buttonSaying window "Create")
+
+    Assert.Empty admitted
+    Assert.Empty(IdentityStore.list root)
+    window.Close()

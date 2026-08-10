@@ -6,11 +6,14 @@ open System.Threading
 open EmuSen.Pegasus
 open EmuSen.Pegasus
 
+/// Linking exists because Connected now carries a Handle and there is no
+/// honest one to show until Hello arrives. See Pegasus_Identity.md §2.
 type ConnectionState =
     | Offline
     | Hosting of code: string * port: int
     | Waiting of code: string * port: int
-    | Connected of peer: string
+    | Linking
+    | Connected of peer: Handle
     | Failed of reason: string
 
 /// Where notes live. Resolved through SpecialFolder rather than a literal
@@ -36,13 +39,8 @@ let defaultWorkspaceRoot =
 
 /// Owns the workspace, the open note and the session, so the view stays a
 /// function of state. Compaction threshold and projection policy live here.
-type Notepad(root: string, displayName: string) =
+type Notepad(root: string, self: PeerInfo) =
     let workspace = new Workspace(root)
-
-    let self =
-        { Id = PeerId.New()
-          Name = displayName
-          Color = "#7c5cff" }
 
     let changed = Event<unit>()
     let stateChanged = Event<ConnectionState>()
@@ -124,7 +122,7 @@ type Notepad(root: string, displayName: string) =
     member private this.Attach(s: Session) =
         session <- Some s
         s.PresenceChanged.Add remotePresence.Trigger
-        s.PeerJoined.Add(fun p -> setState (Connected p.Name))
+        s.PeerJoined.Add(fun p -> setState (Connected p.Handle))
         s.Faulted.Add(fun e -> setState (Failed e.Message))
         s.Closed.Add(fun () -> if connection <> Offline then setState Offline)
         s.RunAsync() |> ignore
@@ -167,8 +165,10 @@ type Notepad(root: string, displayName: string) =
         task {
             try
                 let! s = Client.connectAsync address port code self doc cts.Token
+                // Before Attach, which starts the pump: Hello can arrive and set
+                // Connected, and this would otherwise overwrite it.
+                setState Linking
                 this.Attach s
-                setState (Connected "connecting...")
             with e ->
                 setState (Failed e.Message)
         }
