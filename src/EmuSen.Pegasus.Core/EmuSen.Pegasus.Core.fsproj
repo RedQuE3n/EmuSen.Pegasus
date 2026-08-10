@@ -46,7 +46,7 @@
          somewhere to keep a key. A consumer on 0.1.0 cannot talk to one on
          0.2.0 — Hello says so in the first frame rather than letting it be
          discovered as a decode failure further down. -->
-    <Version>0.2.1</Version>
+    <Version>0.2.2</Version>
     <Authors>Tristan Pelland</Authors>
     <Description>Wire types, frame codec, sealed envelope and identity keys shared by Pegasus and Chariot.</Description>
     <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
@@ -74,9 +74,26 @@
          force an upgrade for no reason.
 
          This is still the core's ONE dependency, which is the rule the test in
-         CoreTests asserts. Pinning it changes the version, not the count. -->
+         CoreTests asserts. Pinning it changes the version, not the count.
+
+         DisableImplicitFSharpCoreReference IS THE LOAD-BEARING HALF, and the
+         first attempt at this pin shipped without it. The F# SDK does not skip
+         its implicit reference when it finds an explicit one - it adds a second
+         PackageReference for the same id (Microsoft.FSharp.NetSdk.props, and
+         the condition there is on this property alone), and NuGet resolves two
+         entries by taking the higher. On this machine both were 10.0.110 so the
+         pin looked like it worked; on a runner whose SDK ships 10.1.302 the
+         implicit one won and 0.2.1 published with exactly the floor 0.2.0 had.
+         A pin that only holds where the two versions already agree is not a
+         pin. -->
     <PackageReference Include="FSharp.Core" Version="10.0.110" />
   </ItemGroup>
+
+  <PropertyGroup>
+    <!-- A property, not an item, and it belongs beside the reference above -
+         see the comment there for why it is the half that matters. -->
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+  </PropertyGroup>
 
   <ItemGroup>
     <!-- Identity.OfPrivateKey and ExportPrivateKey are internal because nothing
