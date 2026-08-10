@@ -15,7 +15,7 @@ let private ct = CancellationToken.None
 
 [<Fact>]
 let ``both envelopes survive a round trip`` () =
-    for envelope in [ Direct; ToHandle(Handle.Parse "RedQuE3n") ] do
+    for envelope in [ Direct; ToHandle(Handle.Parse "RedQuE3n"); FromHandle(Handle.Parse "RedQuE3n") ] do
         let encoded = Codec.encodeEnvelope envelope
         let decoded, consumed = Codec.decodeEnvelope encoded
         Assert.Equal(envelope, decoded)
@@ -34,6 +34,15 @@ let ``the envelope reports its own length, so the payload can be found`` () =
     let decoded, consumed = Codec.decodeEnvelope buffer
     Assert.Equal(envelope, decoded)
     Assert.Equal<byte[]>(payload, buffer[consumed..])
+
+[<Fact>]
+let ``to and from are not confused for one another`` () =
+    // They carry the same payload and differ only by tag, which is exactly the
+    // shape of mistake a decoder makes silently.
+    let handle = Handle.Parse "RedQuE3n"
+    Assert.NotEqual<byte[]>(Codec.encodeEnvelope (ToHandle handle), Codec.encodeEnvelope (FromHandle handle))
+    Assert.Equal(ToHandle handle, fst (Codec.decodeEnvelope (Codec.encodeEnvelope (ToHandle handle))))
+    Assert.Equal(FromHandle handle, fst (Codec.decodeEnvelope (Codec.encodeEnvelope (FromHandle handle))))
 
 [<Fact>]
 let ``an unknown envelope tag is refused rather than guessed at`` () =
@@ -71,7 +80,7 @@ let ``a frame survives the wire with its envelope`` () =
     let key = Crypto.deriveKey "7-lantern-quartz"
     let sent = Update [| 1uy; 2uy; 3uy |]
 
-    for envelope in [ Direct; ToHandle(Handle.Parse "RedQuE3n") ] do
+    for envelope in [ Direct; ToHandle(Handle.Parse "RedQuE3n"); FromHandle(Handle.Parse "RedQuE3n") ] do
         let gotEnvelope, gotFrame = roundTrip envelope sent key
         Assert.Equal(envelope, gotEnvelope)
         Assert.Equal(sent, gotFrame)

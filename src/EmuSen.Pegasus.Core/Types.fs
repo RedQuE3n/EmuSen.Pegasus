@@ -129,6 +129,16 @@ type Presence =
 type Envelope =
     | Direct
     | ToHandle of Handle
+    /// Stamped by a relay on delivery, so the recipient knows whose sealed
+    /// payload it is holding. An Update is opaque bytes and says nothing about
+    /// who wrote it, so without this a client with two correspondents could not
+    /// tell their traffic apart.
+    ///
+    /// This is the RELAY's word, not proof. It knows who sent it because that
+    /// connection signed in, so this is exactly as trustworthy as the relay --
+    /// which is why what it names is a handle to route by and never a reason to
+    /// skip a signature.
+    | FromHandle of Handle
 
 /// One message on the wire.
 ///

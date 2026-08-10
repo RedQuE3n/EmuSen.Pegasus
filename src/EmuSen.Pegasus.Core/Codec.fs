@@ -40,6 +40,9 @@ module Codec =
     [<Literal>]
     let private TagToHandle = 1uy
 
+    [<Literal>]
+    let private TagFromHandle = 2uy
+
     /// Frames are bounded so a malformed or hostile length cannot make us
     /// allocate arbitrarily; see Pegasus_Sync.md §5.
     [<Literal>]
@@ -159,17 +162,20 @@ module Codec =
         | :? EndOfStreamException -> raise (ProtocolError $"truncated payload for frame tag {tag}")
         | :? ArgumentException -> raise (ProtocolError $"malformed payload for frame tag {tag}")
 
+    let private addressed (tag: byte) (handle: Handle) =
+        use ms = new MemoryStream()
+        use w = new BinaryWriter(ms, UTF8Encoding false, true)
+        w.Write tag
+        w.Write handle.Value
+        w.Flush()
+        ms.ToArray()
+
     /// The envelope goes on the wire in the clear, ahead of the sealed payload.
     let encodeEnvelope (envelope: Envelope) : byte[] =
         match envelope with
         | Direct -> [| TagDirect |]
-        | ToHandle handle ->
-            use ms = new MemoryStream()
-            use w = new BinaryWriter(ms, UTF8Encoding false, true)
-            w.Write TagToHandle
-            w.Write handle.Value
-            w.Flush()
-            ms.ToArray()
+        | ToHandle handle -> addressed TagToHandle handle
+        | FromHandle handle -> addressed TagFromHandle handle
 
     /// Returns the envelope and how many bytes it used, because the sealed
     /// payload begins immediately after it and the caller has to find it. A
@@ -181,17 +187,22 @@ module Codec =
         try
             match buffer[0] with
             | TagDirect -> Direct, 1
-            | TagToHandle ->
+            | TagToHandle
+            | TagFromHandle ->
                 use ms = new MemoryStream(buffer, 1, buffer.Length - 1)
                 use r = new BinaryReader(ms, UTF8Encoding false)
                 let raw = r.ReadString()
 
-                // Validated here so a destination arriving from the wire obeys
-                // the same grammar as one typed locally, and a relay never
-                // queues under a key it could not have produced itself.
+                // Validated here so a handle arriving from the wire obeys the
+                // same grammar as one typed locally, and a relay never queues
+                // under a key it could not have produced itself.
                 match Handle.TryParse raw with
-                | Ok handle -> ToHandle handle, 1 + int ms.Position
                 | Error why -> raise (ProtocolError $"envelope names an unusable handle: {why}")
+                | Ok handle ->
+                    let envelope =
+                        if buffer[0] = TagToHandle then ToHandle handle else FromHandle handle
+
+                    envelope, 1 + int ms.Position
             | unknown -> raise (ProtocolError $"unknown envelope tag {unknown}")
         with
         | :? EndOfStreamException -> raise (ProtocolError "truncated envelope")

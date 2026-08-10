@@ -94,11 +94,20 @@ with two envelopes:
 
     0  Direct           no intermediary; nothing to say
     1  ToHandle         a destination handle, 7-bit-length-prefixed UTF-8
+    2  FromHandle       who a relay says a delivery came from
+
+`FromHandle` is stamped by a relay on delivery, because an `Update` is opaque
+bytes and says nothing about who wrote it. It is the relay's word and not proof:
+the relay knows because that connection signed in, so it is exactly as
+trustworthy as the relay, which is why what it names is a handle to route by and
+never a reason to skip a signature. A client that sends one is claiming to be
+the server, and Chariot refuses it.
 
 Two peers on a socket always send `Direct`, and a session refuses anything else,
-because nothing put a plain connection behind a relay. When Chariot delivers, it
-rewrites the destination to `Direct`: the recipient *is* the destination, so
-there is nothing left to route.
+because nothing put a plain connection behind a relay. When Chariot delivers it
+rewrites the destination to `FromHandle`, naming the sender: the recipient *is*
+the destination, so what is left to say is not where it is going but where it
+came from.
 
 **This leaks metadata and there is no way around it.** A relay necessarily
 learns who is connected, who sends to whom, when, and how many bytes. It does
