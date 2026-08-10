@@ -52,7 +52,13 @@ type App(identityRoot: string, workspaceRoot: string) =
                 | Some first -> pad.Open first.Id
                 | None -> pad.CreateNote "scratch" |> ignore
 
-                let window = Shell.PegasusWindow pad
+                // The book is built here rather than inside the window because
+                // this is the only place that knows both where identities are
+                // filed and who just signed in. Two identities on one machine
+                // keep two lists of servers, the same way they keep two lists
+                // of pinned peers.
+                let window =
+                    Shell.PegasusWindow(pad, Servers.bookFor identityRoot identity.Handle)
 
                 // Closing the notepad is how a user quits, so it has to flush
                 // the workspace, release the key, and actually end the process

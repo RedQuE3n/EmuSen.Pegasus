@@ -25,6 +25,8 @@ type Relay(stream: Stream, self: Identity, passphrase: string) =
     let key = Crypto.deriveKey passphrase
     let cts = new CancellationTokenSource()
     let rosterChanged = Event<PeerInfo[]>()
+    let peerJoined = Event<PeerInfo>()
+    let presenceChanged = Event<Presence>()
     let faulted = Event<exn>()
     let closed = Event<unit>()
 
@@ -58,8 +60,30 @@ type Relay(stream: Stream, self: Identity, passphrase: string) =
     let say frame =
         writeSealed Direct (Crypto.seal key (Codec.encode frame))
 
+    /// One conversation, wired up and filed under the correspondent's handle.
+    /// Both ways of starting one -- opening deliberately and being contacted
+    /// out of the blue -- come through here, so there is one place where a
+    /// conversation is given its send function and its events.
+    let start (correspondent: Handle) (joinKey: byte[]) document trust =
+        let send frame =
+            writeSealed (ToHandle correspondent) (Crypto.seal joinKey (Codec.encode frame))
+
+        let conversation = new Conversation(send, self, document, trust)
+        conversation.Faulted.Add faulted.Trigger
+        conversation.PeerJoined.Add peerJoined.Trigger
+        conversation.PresenceChanged.Add presenceChanged.Trigger
+        conversations[correspondent.Folded] <- (conversation, joinKey)
+        conversation
+
     member _.Roster = roster
     member _.RosterChanged = rosterChanged.Publish
+
+    /// Raised when any correspondent has proved itself, whichever end opened
+    /// the conversation. A caller that only wants to know "am I talking to
+    /// somebody" should not have to hold every Conversation to find out.
+    member _.PeerJoined = peerJoined.Publish
+
+    member _.PresenceChanged = presenceChanged.Publish
     member _.Faulted = faulted.Publish
     member _.Closed = closed.Publish
     member _.Self = self.Peer
@@ -87,25 +111,36 @@ type Relay(stream: Stream, self: Identity, passphrase: string) =
     /// Says what to do with an unexpected correspondent: which note they are
     /// joining, under which join code. A client that has not called this can
     /// start conversations but cannot be invited into one.
+    ///
+    /// Deriving the key costs 210,000 PBKDF2 iterations, so this is not
+    /// something to call from a keystroke handler.
     member _.Accept(document: DocumentActor, joinCode: string, trust: PeerInfo -> byte[] -> Result<unit, string>) =
         accepting <- Some(document, Crypto.deriveKey joinCode, trust)
 
     /// Opens a conversation with somebody by name. The join code is the key the
     /// two of you share and the server does not; it still has to be agreed out
     /// of band, exactly as before.
+    ///
+    /// Opening also makes this client willing to ANSWER under the same code,
+    /// which is not a side effect so much as the same intent stated once: a code
+    /// you are willing to speak under is a code you are willing to be spoken to
+    /// under, and the alternative was every caller deriving the same key twice
+    /// to say both halves. It is also what makes the pairing symmetric — both
+    /// people click the same button and neither has to be first.
     member _.OpenAsync(peer: Handle, joinCode: string, document: DocumentActor, trust: PeerInfo -> byte[] -> Result<unit, string>) =
         task {
             let joinKey = Crypto.deriveKey joinCode
-
-            let send frame =
-                writeSealed (ToHandle peer) (Crypto.seal joinKey (Codec.encode frame))
-
-            let conversation = new Conversation(send, self, document, trust)
-            conversation.Faulted.Add faulted.Trigger
-            conversations[peer.Folded] <- (conversation, joinKey)
+            accepting <- Some(document, joinKey, trust)
+            let conversation = start peer joinKey document trust
             do! conversation.BeginAsync()
             return conversation
         }
+
+    /// The live conversation with somebody, if there is one.
+    member _.ConversationWith(peer: Handle) =
+        match conversations.TryGetValue peer.Folded with
+        | true, (conversation, _) -> Some conversation
+        | _ -> None
 
     /// Reads until the socket ends, handing each frame to whoever it belongs to.
     ///
@@ -133,12 +168,7 @@ type Relay(stream: Stream, self: Identity, passphrase: string) =
                         if not (conversations.ContainsKey sender.Folded) then
                             match accepting with
                             | Some(document, joinKey, trust) ->
-                                let send frame =
-                                    writeSealed (ToHandle sender) (Crypto.seal joinKey (Codec.encode frame))
-
-                                let conversation = new Conversation(send, self, document, trust)
-                                conversation.Faulted.Add faulted.Trigger
-                                conversations[sender.Folded] <- (conversation, joinKey)
+                                let conversation = start sender joinKey document trust
                                 do! conversation.BeginAsync()
                             | None -> ()
 

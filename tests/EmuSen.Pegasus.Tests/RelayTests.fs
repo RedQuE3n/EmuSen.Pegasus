@@ -1,120 +1,12 @@
 module EmuSen.Pegasus.Tests.RelayTests
 
 open System
-open System.Collections.Concurrent
-open System.IO
-open System.Net
-open System.Net.Sockets
 open System.Threading
 open Xunit
 open EmuSen.Pegasus
+open EmuSen.Pegasus.Tests.Stubs
 
 let private ct = CancellationToken.None
-
-/// A relay, built from nothing but EmuSen.Pegasus.Core and the documented
-/// exchange.
-///
-/// It is a stub rather than the real Chariot for a structural reason worth
-/// stating: Chariot consumes EmuSen.Pegasus.Core, so this repository cannot
-/// reference Chariot without a cycle. Each half is therefore tested against
-/// what the protocol says rather than against the other half, which is the
-/// arrangement that makes the protocol the contract instead of a description of
-/// whatever the two happen to do. Chariot's own suite proves the server side.
-///
-/// It also records everything it carries, so a test can assert the thing that
-/// matters most: a relay moves payloads it cannot read.
-type private StubRelay(passphrase: string) =
-    let key = Crypto.deriveKey passphrase
-    let listener = new TcpListener(IPAddress.Loopback, 0)
-    let clients = ConcurrentDictionary<string, Stream * SemaphoreSlim>()
-    let carried = ConcurrentBag<byte[]>()
-
-    let write (stream: Stream, gate: SemaphoreSlim) envelope payload =
-        task {
-            do! gate.WaitAsync()
-
-            try
-                do! Framing.writeSealed stream envelope payload ct
-            finally
-                gate.Release() |> ignore
-        }
-
-    member _.Port = (listener.LocalEndpoint :?> IPEndPoint).Port
-    member _.Carried = carried.ToArray()
-    member _.Start() = listener.Start()
-
-    member private _.Broadcast() =
-        for handle in clients.Keys do
-            let others =
-                clients.Keys
-                |> Seq.filter (fun other -> other <> handle)
-                |> Seq.map (fun other -> { Id = PeerId other; Handle = Handle.Parse other; Color = "#ffffff" })
-                |> Seq.toArray
-
-            write clients[handle] Direct (Crypto.seal key (Codec.encode (Roster others)))
-            |> _.GetAwaiter().GetResult()
-
-    member private this.ServeAsync(client: TcpClient) =
-        task {
-            let stream = client.GetStream()
-            let gate = new SemaphoreSlim(1, 1)
-            do! Handshake.asHost stream key ct
-
-            let nonce = Crypto.newChallenge ()
-            do! write (stream, gate) Direct (Crypto.seal key (Codec.encode (Challenge nonce)))
-
-            let mutable who: Handle option = None
-
-            try
-                while true do
-                    let! envelope, payload = Framing.readSealed stream ct
-
-                    match envelope with
-                    | Direct ->
-                        match Codec.decode (Crypto.openSealed key payload) with
-                        | Hello(peer, publicKey, _) ->
-                            // The stub verifies for real, so a test cannot pass
-                            // by sending a proof this would have accepted from
-                            // anybody.
-                            who <- Some peer.Handle
-                            ignore publicKey
-                        | Proof _ ->
-                            match who with
-                            | Some handle ->
-                                clients[handle.Folded] <- (stream, gate)
-                                this.Broadcast()
-                            | None -> ()
-                        | _ -> ()
-                    | ToHandle destination ->
-                        carried.Add payload
-
-                        match clients.TryGetValue destination.Folded, who with
-                        | (true, target), Some sender -> do! write target (FromHandle sender) payload
-                        | _ -> ()
-                    | FromHandle _ -> ()
-            with _ ->
-                who |> Option.iter (fun handle -> clients.TryRemove handle.Folded |> ignore)
-                this.Broadcast()
-        }
-
-    member this.RunAsync() =
-        task {
-            while true do
-                let! client = listener.AcceptTcpClientAsync ct
-                client.NoDelay <- true
-                this.ServeAsync client |> ignore
-        }
-
-    interface IDisposable with
-        member _.Dispose() = listener.Stop()
-
-let private waitFor (timeoutMs: int) (condition: unit -> bool) =
-    let deadline = DateTime.UtcNow.AddMilliseconds(float timeoutMs)
-
-    while not (condition ()) && DateTime.UtcNow < deadline do
-        Thread.Sleep 10
-
-    condition ()
 
 [<Literal>]
 let private Passphrase = "a-server-passphrase"
@@ -122,22 +14,29 @@ let private Passphrase = "a-server-passphrase"
 [<Literal>]
 let private JoinCode = "7-lantern-quartz"
 
-type private Pair() =
+type private Pair(?accepting: bool) =
     let relay = new StubRelay(Passphrase)
-    do relay.Start()
-    do relay.RunAsync() |> ignore
+    do relay.Open()
 
     let aliceId = Peers.identity "alice"
     let bobId = Peers.identity "bob"
     let aliceDoc = new DocumentActor()
     let bobDoc = new DocumentActor()
 
+    /// Whether each client says up front which note it will answer to. False
+    /// is the harder case and the one the late-opener test needs: nobody is
+    /// willing to be invited, so the first frames of a conversation land on a
+    /// client with nothing to receive them.
+    let accepting = defaultArg accepting true
+
     let connect (identity: Identity) (document: DocumentActor) =
         let client =
             RelayClient.connectAsync "127.0.0.1" relay.Port Passphrase identity ct
             |> _.GetAwaiter().GetResult()
 
-        client.Accept(document, JoinCode, Peers.acceptAny)
+        if accepting then
+            client.Accept(document, JoinCode, Peers.acceptAny)
+
         client.RunAsync() |> ignore
         client
 
@@ -229,3 +128,36 @@ let ``a peer using a different join code cannot be understood`` () =
 
     Assert.False(conversation.Proven)
     Assert.Equal("", pair.BobDoc.Text)
+
+[<Fact>]
+let ``an opener that arrives second still completes the handshake for both`` () =
+    // Found by building the window: two people click "Open note" a few seconds
+    // apart, which is what people do. Whoever clicks first sends a Hello and a
+    // Challenge into a client that has nothing to receive them with, and both
+    // are dropped -- so the first Challenge is gone and the early end can never
+    // become proven. It then refuses the late end's SyncStep1 as document
+    // traffic from somebody unproven, and the pairing fails in a way that looks
+    // like the relay eating frames.
+    //
+    // The fix is that a Hello re-sends our own challenge, unchanged. This is
+    // the guard for it, and removing that line turns it red.
+    use pair = new Pair(accepting = false)
+    Assert.True(waitFor 5000 (fun () -> pair.Alice.Roster.Length = 1))
+
+    let early =
+        pair.Alice.OpenAsync(pair.BobId.Handle, JoinCode, pair.AliceDoc, Peers.acceptAny)
+        |> _.GetAwaiter().GetResult()
+
+    // Nothing at the other end is listening for this yet, and that is the point.
+    Thread.Sleep 300
+    Assert.False(early.Proven)
+
+    let late =
+        pair.Bob.OpenAsync(pair.AliceId.Handle, JoinCode, pair.BobDoc, Peers.acceptAny)
+        |> _.GetAwaiter().GetResult()
+
+    Assert.True(waitFor 5000 (fun () -> early.Proven && late.Proven), "the late open left half a handshake behind")
+
+    // And it is a working conversation rather than merely two proven ends.
+    pair.AliceDoc.Insert(0, "clicked a few seconds apart")
+    Assert.True(waitFor 5000 (fun () -> pair.BobDoc.Text = "clicked a few seconds apart"))

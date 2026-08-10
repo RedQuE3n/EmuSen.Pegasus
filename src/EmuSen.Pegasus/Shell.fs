@@ -21,7 +21,12 @@ let applyTheme (app: Avalonia.Application) =
 
 /// Built from LunaP rather than raw Avalonia, so Pegasus inherits the shared
 /// theme, the placement memory and the bootstrap. See Pegasus_Design.md §8.
-type PegasusWindow(pad: Notepad) as this =
+///
+/// The ServerBook is where the last relay address is remembered. It arrives as
+/// a pair of functions rather than a database path so that a headless test can
+/// build the window with `Servers.forgetful` and not write to whoever is running
+/// the suite; the overload below is what the application uses.
+type PegasusWindow(pad: Notepad, book: ServerBook) as this =
     inherit ToolWindow()
 
     let notes = ListBox(MinWidth = 190.0)
@@ -41,6 +46,13 @@ type PegasusWindow(pad: Notepad) as this =
     let port = TextBox(PlaceholderText = "port", Width = 70.0)
     let code = TextBox(PlaceholderText = "join code", Width = 170.0)
     let status = Ui.Hint "offline"
+
+    /// The join code lives in the top row and the buddy list reads it from
+    /// there, so there is one join code on screen no matter which way you pair.
+    /// Passing the getter rather than the box keeps Buddies unable to write to
+    /// a control it does not own.
+    let buddies =
+        Buddies.BuddyList(pad, (fun () -> code.Text |> Option.ofObj |> Option.defaultValue ""), book)
 
     /// Who you are signed in as: handle, then the leading half of the
     /// fingerprint, tinted with the colour that is derived from the same key.
@@ -82,6 +94,7 @@ type PegasusWindow(pad: Notepad) as this =
             | Waiting(c, p) -> $"waiting on port {p}  ·  code {c}"
             | Hosting(c, p) -> $"hosting on port {p}  ·  code {c}"
             | Linking -> "connecting..."
+            | SignedIn server -> $"signed in to {server}"
             | Connected peer -> $"connected to {peer.Value}"
             | Failed reason -> $"failed: {reason}"
 
@@ -89,6 +102,10 @@ type PegasusWindow(pad: Notepad) as this =
             match state with
             | Connected _ -> SolidColorBrush Colors.SeaGreen
             | Failed _ -> SolidColorBrush Colors.IndianRed
+            // Signed in is not connected to a person, and the colour says so.
+            // Green for "you are on a server" would read as "you are sharing
+            // this note", which is the one thing a user must not be wrong about.
+            | SignedIn _
             | Waiting _
             | Hosting _
             | Linking -> SolidColorBrush Colors.Goldenrod
@@ -172,9 +189,18 @@ type PegasusWindow(pad: Notepad) as this =
         DockPanel.SetDock(connection, Dock.Top)
         DockPanel.SetDock(footer, Dock.Bottom)
         DockPanel.SetDock(sidebar, Dock.Left)
+        DockPanel.SetDock(buddies, Dock.Right)
 
-        this.Content <- Ui.Dock(connection, footer, sidebar, editor)
+        this.Content <- Ui.Dock(connection, footer, sidebar, buddies, editor)
 
         showStatus pad.Connection
         refreshNotes ()
         pullText ()
+
+    /// The headless suite's window: the same one, with a book that remembers
+    /// nothing, so a test never writes to whoever is running it.
+    new(pad: Notepad) = PegasusWindow(pad, Servers.forgetful)
+
+    /// The buddy panel, so a test can assert what the window is showing rather
+    /// than what the controller believes.
+    member _.Buddies = buddies

@@ -53,6 +53,13 @@ displayed alongside the code. It therefore differs every session, which is a
 nuisance for anyone trying to forward a fixed port and is a further reason §5
 recommends a tunnel instead.
 
+**This is one of two ways to pair, and the other one is now in the window.** With
+a relay there is no address and no port: both people sign in to a server, pick
+each other out of a buddy list, and type the code they agreed. The code does not
+go away — §4.1 is emphatic about why — but the two things that changed every
+session do. What is above stays the way two people on one LAN pair with nothing
+in the middle.
+
 ## 3. Frame format
 
 A frame is a tag byte followed by a payload:
@@ -166,12 +173,25 @@ are produced and delivered, and the session raises them, but nothing in the wind
 subscribes, so remote carets are not drawn. The transport half is complete and
 tested; the presentation half is not written.
 
-A second one, in the same category: a `Session` is given the document that was
-open when it was created and holds it for its lifetime. Opening a different note
-while connected disposes that document underneath the live session. Disconnect
-first. This is untested — there is no case in the suite that switches notes on a
-connected session, and the failure mode is therefore stated as a hazard rather
-than as an observed behaviour.
+**A correction, and a hazard that is now a behaviour.** This section used to say
+that a `Session` is given the document that was open when it was created and
+holds it for its lifetime, so opening a different note while connected disposes
+that document underneath the live session — and that the reader should disconnect
+first. That was accurate and it was stated as a hazard rather than a behaviour
+because nothing in the suite drove it.
+
+It is no longer left to the reader. Opening a note now drops whatever is
+connected first, and a test in the UI suite drives exactly that: two peers
+converge over a socket, one switches notes, and the assertion is that the
+connection went to `Offline` and the note switched to is still a working
+document. Removing the disconnect turns it red.
+
+What changed was not the hazard but how likely it is. A direct session is opened
+for a note and closed when you are done with it; a conversation through a relay
+outlives a moment of interest in one note, because the buddy list is the thing
+you leave open. Disposing a native Yjs handle another thread is still using is
+not a failure anybody could act on. Dropping a connection is visible and
+recoverable, so that is what happens.
 
 ## 4.1 Through a relay
 
@@ -197,6 +217,41 @@ Either end may open a conversation, and neither has to speak first. A client
 that has said what note it is willing to be invited into will create a
 conversation on first contact from a stranger, because both ends open at once
 and an ordering rule cannot win that race.
+
+### 4.2 The half handshake, and the re-greeting that fixes it
+
+Found by building the window rather than by reading the protocol, which is the
+usual way.
+
+Two people click **Open note** a few seconds apart, because that is what people
+do. Whoever clicks first sends a `Hello` and a `Challenge` into a client that has
+no conversation to receive them with, and both are dropped. When the second one
+opens, its `Hello` and `Challenge` arrive at a client that *is* listening — so the
+late end learns who the early end is, proves itself, and sends `SyncStep1`. The
+early end has never received a proof over *its* nonce, so it is not proven, and
+it refuses that `SyncStep1` as document traffic from an unproven peer. Half a
+handshake, and from the outside it looks like the relay eating frames.
+
+The fix: **the first `Hello` a conversation receives is answered by sending our
+own opening move again** — the same `Hello`, and the same `Challenge` carrying
+the same nonce, so it is one challenge repeated and not a second one. A `Hello`
+is the first evidence that anybody is listening, so it is the moment to say it
+again.
+
+Once, and the bound matters. An unconditional answer would have two peers
+greeting each other for the rest of the afternoon; one flag makes the exchange
+terminate after each side has re-greeted at most once. On a direct socket, where
+nothing is ever dropped, the cost is two extra frames each at setup and a
+duplicate proof, which is why `Proof` is now ignored when the conversation is
+already proven. That guard is load-bearing rather than tidiness: re-running the
+branch would subscribe to local edits a second time and send every keystroke
+twice — harmless to a CRDT, which is exactly why it would never have been
+noticed.
+
+A test drives the case directly: two clients, neither willing to be invited, one
+opening 300ms before the other. Removing the re-greeting turns it red and leaves
+the other four relay tests green, which is what makes it a test of this and not
+of the relay in general.
 
 ## 5. What the encryption is and is not
 

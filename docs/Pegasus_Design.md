@@ -464,6 +464,36 @@ Worth recording that the headless UI test caught this and manual clicking would
 not have: a human opening the window sees it hang and calls it slow, whereas the
 test hangs a build.
 
+### 8.2 The buddy list is a control, not another row
+
+`Buddies.BuddyList` is its own `UserControl` rather than a fourth section of
+`Shell`, because it has its own state — the roster, the server address, who is
+selected — and `Shell` already owns the notes and the editor. The working
+agreement's rule is that a change which does not belong in any existing file
+wants a new file; this is that rule applied rather than quoted.
+
+Two seams in it are worth naming, because both were chosen to keep the control
+testable without a database:
+
+- **The join code arrives as a `unit -> string`, not a `TextBox`.** There is one
+  join code in the window, in the top row, and both ways of pairing read it from
+  there. Two boxes both labelled "join code" would be a genuinely confusing
+  window and an easy mistake to make while pairing. Passing the getter rather
+  than the control also means `BuddyList` cannot write to a control it does not
+  own.
+- **Remembered servers arrive as a `ServerBook`** — two functions, `Recent` and
+  `Remember` — rather than a path to `identity.db`. A control that takes a path
+  can only be tested with a database, and the headless suite has no business
+  writing to whoever is running it. `Servers.forgetful` is what the tests use and
+  `Servers.bookFor` is what `Program` passes. This is §11.2's standard applied to
+  storage rather than to rendering: the control works when the thing it does not
+  name is swapped.
+
+The window exposes the panel as a member so a test can assert what is *shown*
+rather than what the controller believes — a roster that reaches `Notepad.Roster`
+and never reaches the list box is the same class of bug as the blank window in
+§11, and the same kind of assertion catches it.
+
 ---
 
 ## 9. Why the tests are a separate project

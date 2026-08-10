@@ -11,6 +11,7 @@
   <ItemGroup>
     <Compile Include="Peers.fs" />
     <Compile Include="Headless.fs" />
+    <Compile Include="Stubs.fs" />
     <Compile Include="CoreTests.fs" />
     <Compile Include="IdentityTests.fs" />
     <Compile Include="TrustTests.fs" />

@@ -274,3 +274,61 @@ let ``a peer that sends an unusable handle is rejected`` () =
         stream.ToArray()
 
     Assert.Throws<ProtocolError>(fun () -> Codec.decode hostile |> ignore)
+
+// ---------------------------------------------------------------------------
+// Remembered servers
+// ---------------------------------------------------------------------------
+
+[<Fact>]
+let ``the most recent server is the one offered back`` () =
+    let root = tempRoot ()
+    let alice = Handle.Parse "alice"
+
+    Servers.remember root alice { Host = "old.example"; Port = 9040 }
+    Threading.Thread.Sleep 5
+    Servers.remember root alice { Host = "new.example"; Port = 9041 }
+
+    Assert.Equal(Some { Host = "new.example"; Port = 9041 }, Servers.mostRecent root alice)
+    Assert.Equal(2, (Servers.recent root alice).Length)
+
+[<Fact>]
+let ``signing in to the same server twice does not list it twice`` () =
+    // The primary key does the work. Without it a buddy panel would offer the
+    // same address once per launch, which is a list that grows forever.
+    let root = tempRoot ()
+    let alice = Handle.Parse "alice"
+    let server = { Host = "chariot.example"; Port = 9040 }
+
+    Servers.remember root alice server
+    Servers.remember root alice server
+
+    Assert.Equal<ServerAddress[]>([| server |], Servers.recent root alice)
+
+[<Fact>]
+let ``two identities on one machine keep separate server lists`` () =
+    // The same argument as known_peers: two identities on a machine are two
+    // people, and one should not be able to read where the other signs in.
+    let root = tempRoot ()
+    Servers.remember root (Handle.Parse "alice") { Host = "hers.example"; Port = 9040 }
+
+    Assert.Empty(Servers.recent root (Handle.Parse "bob"))
+    Assert.Single(Servers.recent root (Handle.Parse "alice")) |> ignore
+
+[<Fact>]
+let ``the servers table has nowhere to put a passphrase`` () =
+    // A guard on a decision rather than on behaviour, and it is here because
+    // the decision is easy to undo by accident: adding a column called
+    // something like `passphrase` to save a user some typing would put a
+    // secret in the clear in the same file whose whole point is that the
+    // secret in it is not. There is nothing honest to seal it under -- the
+    // password that unlocked the identity is not retained, and an ECDSA key
+    // cannot encrypt. Pegasus_Identity.md §8.
+    let root = tempRoot ()
+    Servers.remember root (Handle.Parse "alice") { Host = "chariot.example"; Port = 9040 }
+
+    use db = Db.openAt (IdentityStore.databaseIn root)
+
+    let columns =
+        Db.query db "SELECT name FROM pragma_table_info('servers')" [] (fun r -> r.GetString 0)
+
+    Assert.Equal<string list>([ "owner"; "host"; "port"; "last_used" ], columns)

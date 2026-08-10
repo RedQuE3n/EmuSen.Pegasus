@@ -277,12 +277,44 @@ either "they reinstalled" or "this is not them" and only a person can tell
 which. The refusal message names both fingerprints so that person has what they
 need to decide.
 
-## 8. What this pass deliberately does not do
+## 8. Remembered servers, and the one column that is not there
 
-- **No account server, no buddy list, no connect-by-handle.** Pairing is still
-  address, port and join code (`Pegasus_Sync.md` §2). That is Chariot, and when
-  it arrives it authenticates these same keys rather than inventing a second
-  credential.
+Signing in to a relay is per-identity bookkeeping like everything else in §3, so
+it is a table in the same database: `servers`, keyed by `(owner, host, port)`.
+The `owner` column is there for the reason `known_peers` has one — two
+identities on a machine are two people, and one should not be able to read where
+the other signs in.
+
+An address is only written once the connection has actually succeeded. Recording
+what was typed would offer somebody their own misspelling back on the next
+launch as though it had worked.
+
+**There is deliberately no passphrase column, and it is worth saying why rather
+than leaving it to be added as a kindness.** A relay passphrase is a secret, and
+this database's whole claim is that the secret in it — the private key — is
+sealed (§3, §4). There is nothing honest to seal a passphrase under: the password
+that unlocked the identity is not retained past sign-in, and the key that *is*
+retained is ECDSA, which signs and cannot encrypt. So the choices are a secret
+sitting in the clear beside a sealed one, or retyping a passphrase. Retyping is
+cheaper than the sentence we would otherwise have to write here.
+
+A test asserts the table's columns are exactly `owner, host, port, last_used`,
+which is a guard on a decision rather than on a behaviour. It is there because
+this is the kind of decision that gets undone by accident, by somebody saving a
+user four seconds of typing.
+
+Losing this table costs a user nothing they cannot retype, which is the right
+shape for a convenience.
+
+## 9. What this pass deliberately does not do
+
+**A correction.** This list used to open with "no account server, no buddy list,
+no connect-by-handle — pairing is still address, port and join code", and that is
+no longer true. `EmuSen.Chariot` exists, the window has a buddy list, and a peer
+is reached by name. What that section promised has held: Chariot authenticates
+these same keys rather than inventing a second credential, and the join code is
+untouched by any of it — `Pegasus_Sync.md` §4.1.
+
 - **No password change, and no recovery.** Lose the password and the identity is
   gone; the notes are not, because they are not encrypted with it.
 - **No key rotation.** There is no way to say "this is still me, with a new

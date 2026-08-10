@@ -19,6 +19,11 @@ type ConnectionState =
     | Hosting of code: string * port: int
     | Waiting of code: string * port: int
     | Linking
+    /// Signed in to a relay, and not yet in a conversation with anybody. This
+    /// is a real resting state rather than a step on the way to one: you can
+    /// sit on a buddy list all day without opening a note with somebody, which
+    /// is most of what a buddy list is for.
+    | SignedIn of server: ServerAddress
     | Connected of peer: Handle
     | Failed of reason: string
 
@@ -78,10 +83,12 @@ type Notepad(root: string, self: Identity, trust: PeerInfo -> byte[] -> Result<u
     let changed = Event<unit>()
     let stateChanged = Event<ConnectionState>()
     let remotePresence = Event<Presence>()
+    let rosterChanged = Event<PeerInfo[]>()
 
     let mutable openNote: (NoteId * DocumentActor * Store.NoteFile * IDisposable) option = None
     let mutable session: Session option = None
     let mutable host: Host option = None
+    let mutable relay: Relay option = None
     let mutable connection = Offline
     let mutable cts = new CancellationTokenSource()
 
@@ -114,6 +121,18 @@ type Notepad(root: string, self: Identity, trust: PeerInfo -> byte[] -> Result<u
     member _.Connection = connection
     member _.Notes = workspace.Notes
 
+    /// Who else is signed in to the relay, or empty when there is no relay.
+    /// Empty rather than an option, because a buddy list with nobody in it and
+    /// no buddy list at all look the same on screen and the view should not
+    /// have to branch to say so.
+    member _.Roster =
+        match relay with
+        | Some r -> r.Roster
+        | None -> [||]
+
+    member _.RosterChanged = rosterChanged.Publish
+    member _.IsOnRelay = relay.IsSome
+
     member _.CurrentNoteId = openNote |> Option.map (fun (id, _, _, _) -> id)
     member _.Document = openNote |> Option.map (fun (_, doc, _, _) -> doc)
 
@@ -122,8 +141,20 @@ type Notepad(root: string, self: Identity, trust: PeerInfo -> byte[] -> Result<u
         | Some(_, doc, _, _) -> doc.Text
         | None -> ""
 
+    /// Opens a note, disconnecting first if anything is connected.
+    ///
+    /// The disconnect is not politeness. A Session or a Conversation is handed
+    /// the DocumentActor that was open when it started and holds it for its
+    /// lifetime, so switching notes underneath one disposes a native Yjs handle
+    /// another thread is still using. That was recorded as a hazard rather than
+    /// a behaviour because nothing in the suite drove it; a buddy list makes it
+    /// ordinary — a conversation now outlives a moment of interest in one note —
+    /// so it is closed here rather than left to be discovered. Dropping the
+    /// connection is a visible, recoverable thing; the alternative was not.
+    /// Pegasus_Sync.md §4 carries the correction.
     member this.Open(id: NoteId) =
         if this.CurrentNoteId <> Some id then
+            if connection <> Offline then this.Disconnect()
             closeNote ()
             let doc, file, sub = workspace.OpenNote id
             openNote <- Some(id, doc, file, sub)
@@ -211,12 +242,82 @@ type Notepad(root: string, self: Identity, trust: PeerInfo -> byte[] -> Result<u
         }
         |> ignore
 
+    /// Signs in to a relay, so peers can be reached by handle.
+    ///
+    /// Returns the task so a caller that needs the outcome can await it; the
+    /// window does not, because every outcome it cares about arrives as a
+    /// ConnectionState. Nothing here throws — a server that is not there is an
+    /// ordinary thing, and it belongs on the status line, not in a stack trace.
+    ///
+    /// The address is remembered by whoever passed a ServerBook in, not here:
+    /// where a machine files what it knows about identities is deliberately not
+    /// this type's business, the same reason `trust` is a parameter.
+    member this.SignInToRelay(host: string, port: int, passphrase: string) =
+        match this.Document with
+        | None -> failwith "open a note before signing in to a server"
+        | Some _ ->
+
+        this.Disconnect()
+        cts <- new CancellationTokenSource()
+        let token = cts.Token
+        setState Linking
+
+        task {
+            try
+                let! r = RelayClient.connectAsync host port passphrase self token
+                r.RosterChanged.Add rosterChanged.Trigger
+                r.PresenceChanged.Add remotePresence.Trigger
+                r.PeerJoined.Add(fun p -> setState (Connected p.Handle))
+                r.Faulted.Add(fun e -> setState (Failed e.Message))
+                r.Closed.Add(fun () -> if connection <> Offline then setState Offline)
+                relay <- Some r
+
+                // Set before the pump starts, for the same reason Join sets
+                // Linking before Attach: a roster can arrive on the first read
+                // and overwrite a state this line has not written yet.
+                setState (SignedIn { Host = host; Port = port })
+                r.RunAsync() |> ignore
+            with e ->
+                setState (Failed e.Message)
+        }
+
+    /// Opens a note with somebody on the roster, by name.
+    ///
+    /// Run off the calling thread deliberately: deriving the join key is
+    /// 210,000 PBKDF2 iterations, and this is called from a button, so doing it
+    /// inline would freeze the window for as long as it takes.
+    member this.OpenWith(peer: Handle, joinCode: string) =
+        match relay, this.Document with
+        | Some r, Some doc ->
+            setState Linking
+
+            Tasks.Task.Run(fun () ->
+                task {
+                    try
+                        let! _ = r.OpenAsync(peer, joinCode, doc, trust)
+                        return ()
+                    with e ->
+                        setState (Failed e.Message)
+                }
+                :> Tasks.Task)
+        | _ -> failwith "sign in to a server before opening a note with somebody"
+
     member _.Disconnect() =
         cts.Cancel()
         session |> Option.iter (fun s -> (s :> IDisposable).Dispose())
         session <- None
         host |> Option.iter (fun h -> (h :> IDisposable).Dispose())
         host <- None
+
+        relay
+        |> Option.iter (fun r ->
+            (r :> IDisposable).Dispose()
+            // The roster is a property of a connection that no longer exists,
+            // so it empties with it. Leaving the last one on screen would show
+            // a list of people this machine can no longer reach.
+            rosterChanged.Trigger [||])
+
+        relay <- None
         setState Offline
 
     interface IDisposable with

@@ -54,6 +54,25 @@ module Db =
               first_seen  TEXT NOT NULL,
               PRIMARY KEY (owner, handle)
           )
+          """
+          // Relay servers this identity has signed in to, so the address is
+          // typed once rather than every launch. Owner-scoped for the same
+          // reason known_peers is: two identities on a machine are two people.
+          //
+          // THE PASSPHRASE IS DELIBERATELY NOT A COLUMN HERE. There is nothing
+          // to seal it under -- the password that unlocks the identity is not
+          // retained past sign-in, and an ECDSA key cannot encrypt -- so
+          // remembering it would mean a secret sitting in the clear in a file
+          // whose whole point is that the secret in it is not. Retyping a
+          // passphrase is a smaller cost than that. See Pegasus_Identity.md §8.
+          """
+          CREATE TABLE IF NOT EXISTS servers (
+              owner     TEXT NOT NULL,
+              host      TEXT NOT NULL,
+              port      INTEGER NOT NULL,
+              last_used TEXT NOT NULL,
+              PRIMARY KEY (owner, host, port)
+          )
           """ ]
 
     let private execute (connection: SqliteConnection) (sql: string) =

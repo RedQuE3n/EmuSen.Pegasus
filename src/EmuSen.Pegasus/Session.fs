@@ -35,6 +35,20 @@ type Conversation(send: Frame -> Threading.Tasks.Task<unit>, self: Identity, doc
     let mutable proven = false
     let mutable finished = false
 
+    /// Whether we have already answered somebody's Hello with our own. See the
+    /// Hello case below; this is what stops two peers greeting each other for
+    /// the rest of the afternoon.
+    let mutable regreeted = false
+
+    /// Everything we say to open: who we are, and a nonce for them to sign.
+    /// Sent by BeginAsync, and again on first contact — one function, because
+    /// two copies of an opening move is how the two drift apart.
+    let greet () =
+        task {
+            do! send (Hello(self.Peer, self.PublicKey, Version.Protocol))
+            do! send (Challenge nonce)
+        }
+
     /// Retained, because Hello arrives once and a late subscriber would miss it.
     member _.RemotePeer = remotePeer
 
@@ -57,11 +71,7 @@ type Conversation(send: Frame -> Threading.Tasks.Task<unit>, self: Identity, doc
 
     /// Says hello and asks who they are. Called once, by whatever owns the
     /// transport, as soon as there is somewhere for frames to go.
-    member _.BeginAsync() =
-        task {
-            do! send (Hello(self.Peer, self.PublicKey, Version.Protocol))
-            do! send (Challenge nonce)
-        }
+    member _.BeginAsync() = greet ()
 
     /// Handles one frame. Raises ProtocolError on anything a peer should not
     /// have sent, and the caller decides what a broken conversation costs --
@@ -84,10 +94,42 @@ type Conversation(send: Frame -> Threading.Tasks.Task<unit>, self: Identity, doc
                     remotePeer <- Some peer
                     remoteKey <- Some publicKey
 
+                    // Our opening move again, because the first one may have
+                    // gone nowhere.
+                    //
+                    // Through a relay either end may open a conversation, and
+                    // whoever opens first speaks into a correspondent that has
+                    // nothing to receive with yet: its Hello and its Challenge
+                    // are dropped on the floor. The late end then proves
+                    // itself, sends SyncStep1, and the early end refuses it as
+                    // document traffic from somebody unproven — half a
+                    // handshake, and it looks from the outside like the relay
+                    // eating frames. Two people clicking the same button a few
+                    // seconds apart is not a race ordering can win.
+                    //
+                    // A Hello is the first evidence anybody is listening, so it
+                    // is the moment to say it again. ONCE, and that is what the
+                    // flag is for: an unconditional answer would have two peers
+                    // greeting each other for the rest of the afternoon. The
+                    // nonce is unchanged, so this is the same challenge repeated
+                    // and not a second one, and a peer that answers both is
+                    // handled by the Proof case below. Pegasus_Sync.md §4.1.
+                    if not regreeted then
+                        regreeted <- true
+                        do! greet ()
+
             | Challenge theirs ->
                 // Answered without waiting for anything: signing costs us
                 // nothing and discloses nothing.
                 do! send (Proof(Attestation.prove self theirs))
+
+            // A second proof is ignored rather than re-verified, and that is
+            // load-bearing now that a Hello re-sends our challenge: a peer may
+            // legitimately answer twice. Re-running the branch would subscribe
+            // to local edits a second time and every keystroke would go out
+            // twice -- harmless to a CRDT, which is exactly why it would never
+            // have been noticed.
+            | Proof _ when proven -> ()
 
             | Proof signature ->
                 match remotePeer, remoteKey with

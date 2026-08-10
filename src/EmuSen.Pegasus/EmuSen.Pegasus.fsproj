@@ -25,12 +25,14 @@
     <Compile Include="Db.fs" />
     <Compile Include="IdentityStore.fs" />
     <Compile Include="KnownPeers.fs" />
+    <Compile Include="Servers.fs" />
     <Compile Include="Document.fs" />
     <Compile Include="Store.fs" />
     <Compile Include="Workspace.fs" />
     <Compile Include="Session.fs" />
     <Compile Include="Relay.fs" />
     <Compile Include="Controller.fs" />
+    <Compile Include="Buddies.fs" />
     <Compile Include="SignIn.fs" />
     <Compile Include="Shell.fs" />
     <Compile Include="Program.fs" />

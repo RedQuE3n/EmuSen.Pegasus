@@ -8,6 +8,7 @@ open Xunit
 open EmuSen.Pegasus
 open EmuSen.Pegasus.Controller
 open EmuSen.Pegasus.Tests.Headless
+open EmuSen.Pegasus.Tests.Stubs
 
 [<Fact>]
 let ``the window renders an editor bound to the open note`` () =
@@ -103,6 +104,196 @@ let ``a note survives closing and reopening the notepad`` () =
     reopened.Open noteId
     Assert.Equal("this must still be here", reopened.Text)
     Assert.Contains(reopened.Notes, fun n -> n.Name = "durable")
+
+[<Fact>]
+let ``opening another note drops the connection rather than the document under it`` () =
+    // A Session is handed the DocumentActor that was open when it started and
+    // holds it for its lifetime, so switching notes used to dispose a native
+    // Yjs handle another thread was still using. That was recorded as a hazard
+    // because nothing drove it; a buddy list makes it ordinary, since a
+    // conversation now outlives a moment of interest in one note. Disconnecting
+    // is visible and recoverable. The alternative was not.
+    started.Force()
+    use hostPad = new Notepad(tempRoot (), Peers.identity "alice", Peers.acceptAny)
+    use joinPad = new Notepad(tempRoot (), Peers.identity "bob", Peers.acceptAny)
+    let first = hostPad.CreateNote "first"
+    let second = hostPad.CreateNote "second"
+    joinPad.CreateNote "shared" |> ignore
+    hostPad.Open first.Id
+
+    let code, port = hostPad.StartHosting()
+    joinPad.Join("127.0.0.1", port, code)
+
+    let connected (pad: Notepad) =
+        match pad.Connection with
+        | Connected _ -> true
+        | _ -> false
+
+    Assert.True(pump (fun () -> connected hostPad && connected joinPad))
+
+    hostPad.Open second.Id
+
+    Assert.Equal(Offline, hostPad.Connection)
+    Assert.Equal(Some second.Id, hostPad.CurrentNoteId)
+
+    // And the note switched to is a working document rather than a corpse.
+    hostPad.Edit "still editable afterwards"
+    Assert.Equal("still editable afterwards", hostPad.Text)
+
+    joinPad.Disconnect()
+
+// ---------------------------------------------------------------------------
+// The buddy list
+// ---------------------------------------------------------------------------
+
+[<Literal>]
+let private Passphrase = "a-server-passphrase"
+
+[<Literal>]
+let private JoinCode = "7-lantern-quartz"
+
+/// Signs a window in to a relay by typing into it, which is the whole point:
+/// the transport has been able to do this since the previous pass, and what
+/// this suite is for is proving a person can.
+let private signInThrough (window: Window) (relay: StubRelay) =
+    (boxWith window "server").Text <- "127.0.0.1"
+    (boxWith window "server port").Text <- string relay.Port
+    (boxWith window "server passphrase").Text <- Passphrase
+    click (buttonSaying window "Sign in")
+
+[<Fact>]
+let ``the buddy list fills with whoever else is signed in`` () =
+    started.Force()
+    use relay = new StubRelay(Passphrase)
+    relay.Open()
+
+    use aliceId = Peers.identity "alice"
+    use bobId = Peers.identity "bob"
+    use alicePad = new Notepad(tempRoot (), aliceId, Peers.acceptAny)
+    use bobPad = new Notepad(tempRoot (), bobId, Peers.acceptAny)
+    alicePad.CreateNote "shared" |> ignore
+    bobPad.CreateNote "shared" |> ignore
+
+    let window = Shell.PegasusWindow alicePad
+    window.Show()
+    Dispatcher.UIThread.RunJobs()
+
+    signInThrough window relay
+    bobPad.SignInToRelay("127.0.0.1", relay.Port, Passphrase) |> ignore
+
+    // What the window shows, not what the controller believes.
+    Assert.True(pump (fun () -> window.Buddies.Roster.ItemCount = 1), "the buddy list never filled")
+    Assert.Equal("bob", string window.Buddies.Roster.Items[0])
+
+    alicePad.Disconnect()
+    bobPad.Disconnect()
+    window.Close()
+
+[<Fact>]
+let ``a note is opened with somebody by name, with no address and no port`` () =
+    // Pass 6a in one test, and the reason the README's pairing section had to be
+    // rewritten. Alice types a server once, picks Bob out of a list, types the
+    // code they agreed, and their notes converge. Nowhere does anybody read out
+    // an address or a port -- and the join code is still theirs, because it is
+    // the key the relay must not have.
+    started.Force()
+    use relay = new StubRelay(Passphrase)
+    relay.Open()
+
+    use aliceId = Peers.identity "alice"
+    use bobId = Peers.identity "bob"
+    use alicePad = new Notepad(tempRoot (), aliceId, Peers.acceptAny)
+    use bobPad = new Notepad(tempRoot (), bobId, Peers.acceptAny)
+    alicePad.CreateNote "shared" |> ignore
+    bobPad.CreateNote "shared" |> ignore
+
+    let window = Shell.PegasusWindow alicePad
+    window.Show()
+    Dispatcher.UIThread.RunJobs()
+
+    signInThrough window relay
+    bobPad.SignInToRelay("127.0.0.1", relay.Port, Passphrase) |> ignore
+    Assert.True(pump (fun () -> window.Buddies.Roster.ItemCount = 1))
+
+    (boxWith window "join code").Text <- JoinCode
+    window.Buddies.Select bobId.Handle
+    Dispatcher.UIThread.RunJobs()
+    click (buttonSaying window "Open note")
+
+    // Bob's side of the same decision: he agreed the code out of band and says
+    // so by opening too. Driven through the controller rather than a second
+    // window because one window under test is enough.
+    bobPad.OpenWith(aliceId.Handle, JoinCode) |> ignore
+
+    Assert.True(pump (fun () -> alicePad.Connection = Connected bobId.Handle), "the window never said it was connected")
+
+    bobPad.Edit "written on the other machine, reached by name"
+    let editor = editorOf window
+    Assert.True(pump (fun () -> editor.Text = "written on the other machine, reached by name"))
+
+    alicePad.Disconnect()
+    bobPad.Disconnect()
+    window.Close()
+
+[<Fact>]
+let ``a server is remembered only once it has actually worked`` () =
+    started.Force()
+    use relay = new StubRelay(Passphrase)
+    relay.Open()
+
+    let remembered = ResizeArray<ServerAddress>()
+
+    let book =
+        { Recent = fun () -> None
+          Remember = remembered.Add }
+
+    use aliceId = Peers.identity "alice"
+    use alicePad = new Notepad(tempRoot (), aliceId, Peers.acceptAny)
+    alicePad.CreateNote "shared" |> ignore
+
+    let window = Shell.PegasusWindow(alicePad, book)
+    window.Show()
+    Dispatcher.UIThread.RunJobs()
+
+    // A port nothing is listening on. Remembering this would offer somebody
+    // their own typo back on the next launch as though it had worked.
+    (boxWith window "server").Text <- "127.0.0.1"
+    (boxWith window "server port").Text <- "1"
+    (boxWith window "server passphrase").Text <- Passphrase
+    click (buttonSaying window "Sign in")
+    Assert.True(pump (fun () -> match alicePad.Connection with Failed _ -> true | _ -> false))
+    Assert.Empty remembered
+
+    signInThrough window relay
+    Assert.True(pump (fun () -> remembered.Count = 1), "a server that worked was not remembered")
+    Assert.Equal(relay.Port, remembered[0].Port)
+
+    alicePad.Disconnect()
+    window.Close()
+
+[<Fact>]
+let ``a remembered server is offered back without its passphrase`` () =
+    started.Force()
+
+    let book =
+        { Recent = fun () -> Some { Host = "chariot.example"; Port = 9040 }
+          Remember = ignore }
+
+    use aliceId = Peers.identity "alice"
+    use alicePad = new Notepad(tempRoot (), aliceId, Peers.acceptAny)
+    alicePad.CreateNote "shared" |> ignore
+
+    let window = Shell.PegasusWindow(alicePad, book)
+    window.Show()
+    Dispatcher.UIThread.RunJobs()
+
+    Assert.Equal("chariot.example", (boxWith window "server").Text)
+    Assert.Equal("9040", (boxWith window "server port").Text)
+
+    // The one that must stay empty. There is nothing to seal a passphrase
+    // under, so it is not stored, and a prefilled box would mean it was.
+    Assert.True(String.IsNullOrEmpty (boxWith window "server passphrase").Text)
+    window.Close()
 
 // ---------------------------------------------------------------------------
 // Sign-in

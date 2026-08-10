@@ -61,9 +61,24 @@ peer will see you as — and a password, and click **Create**; after that,
 machine and is never sent anywhere. `docs/Pegasus_Identity.md` §2 is worth
 reading before you trust a handle: it is carried on the wire but not yet proven.
 
-Then one person clicks **Host** and reads out the address, the port and the join
-code. The other types all three in and clicks **Join**. The port is assigned by
-the operating system and differs every session.
+Then pair, one of two ways.
+
+**Through a server**, if you run one — `EmuSen.Chariot`. Type its address and
+passphrase into the buddy panel and click **Sign in**; everyone else signed in
+appears in the list. Agree a join code between yourselves, type it into the box
+at the top, pick each other out of the list and click **Open note**. No address,
+no port, and the server is remembered for next time.
+
+**Directly**, with nothing in the middle. One person clicks **Host** and reads
+out the address, the port and the join code; the other types all three in and
+clicks **Join**. The port is assigned by the operating system and differs every
+session.
+
+The join code is in both, and that is not an oversight. It is the key your notes
+are sealed under, a server has no way to derive it, and a relay that could read
+your notes would be a different program — `docs/Pegasus_Sync.md` §4.1. What a
+server saves you is the address and the port, which are the two things that
+changed every session.
 
 Notes live under `SpecialFolder.LocalApplicationData` — `~/.local/share/Pegasus/workspace`
 on Linux — one `.pegasus` file each, with a plain `.md` projection beside every
@@ -71,22 +86,26 @@ note for reading in any editor. The `.md` is regenerated and never read back;
 `docs/Pegasus_Format.md` §5 explains why.
 
 Two limits worth knowing before you pair: a host accepts exactly one joiner, and
-switching notes while connected is not supported — disconnect first.
-`docs/Pegasus_Sync.md` §1 and §4 state both precisely.
+opening another note drops whatever is connected, because a live conversation
+holds the document that was open when it started. `docs/Pegasus_Sync.md` §1 and
+§4 state both precisely; the second used to say "disconnect first" and now does
+it for you.
 
 ## Tests
 
     dotnet test
 
-131 tests, all headless — no window is ever opened, including for the UI tests,
+141 tests, all headless — no window is ever opened, including for the UI tests,
 which drive a real Avalonia control tree under `Avalonia.Headless`. The suite
 covers frame and crypto round trips, torn-file recovery, compaction, caret
-arithmetic, property-based convergence under randomised interleavings, identity
-identities and pinned peer keys in SQLite, the routing envelope a relay reads
-without being able to open what it carries, the mutual identity proof over a real
-loopback socket including a refused impostor, two peers over that same socket, the
-startup path from sign-in window to notepad through a real desktop lifetime, and
-the full path from one peer's mailbox to the other's rendered editor.
+arithmetic, property-based convergence under randomised interleavings, identities
+and pinned peer keys in SQLite, the routing envelope a relay reads without being
+able to open what it carries, the mutual identity proof over a real loopback
+socket including a refused impostor, two peers over that same socket, the startup
+path from sign-in window to notepad through a real desktop lifetime, a note
+opened with somebody by name through a relay with no address and no port typed
+anywhere, and the full path from one peer's mailbox to the other's rendered
+editor.
 
 Several of those tests are guards that were made to fail on purpose before being
 trusted: two assert every control in a window is actually templated, one asserts
@@ -99,6 +118,12 @@ raw bytes to a base64 file — and `docs/Pegasus_Identity.md` §3 records the
 correction. `docs/Pegasus_Design.md` §11 explains what shipped before the first
 of them existed, and §12.4 lists the four sabotages the startup tests were held
 against.
+
+The buddy list arrived with five more, each watched failing first: dropping the
+re-greeting that repairs a one-sided open, emptying the roster on its way to the
+list box, remembering a server address before the connection worked, prefilling a
+passphrase that is deliberately never stored, and switching notes without
+dropping the connection holding the document.
 
 ## Documentation
 
@@ -122,14 +147,22 @@ on the wire but not yet drawn — `docs/Pegasus_Sync.md` §4. Handles are proven
 challenge with the key its fingerprint names, and a key that changes for a known
 handle is refused — `docs/Pegasus_Identity.md` §2 and §7.
 
-Connecting through a relay works and is tested — a peer is reached by handle,
-with no address and no port — but **the window does not offer it yet**, so the
-pairing ritual above is still what a user does. `docs/Pegasus_Sync.md` §4.1 is
-the transport; the server is `EmuSen.Chariot`.
+Connecting through a relay works, is tested, and **is now in the window**: sign
+in to a server, pick somebody out of the buddy list, and share a note with them
+by name. `docs/Pegasus_Sync.md` §4.1 is the transport; the server is
+`EmuSen.Chariot`.
 
-Deferred by choice: an always-on relay (the session abstraction is shaped to
-accept one as a peer that never disconnects), rich text, mobile, a browser
-client, and LAN autodiscovery.
+What the relay does not do yet: it does not prove itself to you. Your only
+assurance that you reached the right server is the passphrase, so anyone holding
+that could stand one up and be believed, and the roster is readable to whoever
+holds it. Both are the next pass — `Chariot_Design.md` §9.2.
+
+Deferred by choice: rich text, mobile, a browser client, and LAN autodiscovery.
+
+The relay is no longer among these, and the sentence that used to sit here —
+"the session abstraction is shaped to accept one as a peer that never
+disconnects" — turned out to be wrong for a reason worth reading:
+`docs/Pegasus_Sync.md` §1.
 
 ## Licence
 
