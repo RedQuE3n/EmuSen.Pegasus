@@ -59,7 +59,12 @@ Pegasus opens on a sign-in window. Pick a handle — `RedQuE3n`, the name your
 peer will see you as — and a password, and click **Create**; after that,
 **Sign in** with the same pair. The password unlocks a keypair kept on your own
 machine and is never sent anywhere. `docs/Pegasus_Identity.md` §2 is worth
-reading before you trust a handle: it is carried on the wire but not yet proven.
+reading before you trust a handle: it is proven, and what that does and does not
+establish is narrower than it sounds.
+
+(This paragraph used to end "it is carried on the wire but not yet proven",
+which stopped being true two passes ago and is corrected here rather than
+quietly dropped.)
 
 Then pair, one of two ways.
 
@@ -85,17 +90,17 @@ on Linux — one `.pegasus` file each, with a plain `.md` projection beside ever
 note for reading in any editor. The `.md` is regenerated and never read back;
 `docs/Pegasus_Format.md` §5 explains why.
 
-Two limits worth knowing before you pair: a host accepts exactly one joiner, and
-opening another note drops whatever is connected, because a live conversation
-holds the document that was open when it started. `docs/Pegasus_Sync.md` §1 and
-§4 state both precisely; the second used to say "disconnect first" and now does
-it for you.
+Two limits worth knowing before you pair: a direct host accepts exactly one
+joiner, and opening another note drops whatever is connected, because a live
+conversation holds the document that was open when it started.
+`docs/Pegasus_Sync.md` §1 and §4 state both precisely; the second used to say
+"disconnect first" and now does it for you.
 
 ## Tests
 
     dotnet test
 
-141 tests, all headless — no window is ever opened, including for the UI tests,
+149 tests, all headless — no window is ever opened, including for the UI tests,
 which drive a real Avalonia control tree under `Avalonia.Headless`. The suite
 covers frame and crypto round trips, torn-file recovery, compaction, caret
 arithmetic, property-based convergence under randomised interleavings, identities
@@ -123,7 +128,10 @@ The buddy list arrived with five more, each watched failing first: dropping the
 re-greeting that repairs a one-sided open, emptying the roster on its way to the
 list box, remembering a server address before the connection worked, prefilling a
 passphrase that is deliberately never stored, and switching notes without
-dropping the connection holding the document.
+dropping the connection holding the document. The pass that made the relay prove
+itself added three more: skipping the signature on an ephemeral key, keeping
+control traffic sealed under the passphrase, and believing whatever server turns
+up.
 
 ## Documentation
 
@@ -152,10 +160,14 @@ in to a server, pick somebody out of the buddy list, and share a note with them
 by name. `docs/Pegasus_Sync.md` §4.1 is the transport; the server is
 `EmuSen.Chariot`.
 
-What the relay does not do yet: it does not prove itself to you. Your only
-assurance that you reached the right server is the passphrase, so anyone holding
-that could stand one up and be believed, and the roster is readable to whoever
-holds it. Both are the next pass — `Chariot_Design.md` §9.2.
+The relay proves itself to you: it presents its own key, signs a challenge with
+it, and your client pins that key and refuses a change afterwards — the same rule
+it applies to a person. The passphrase is a doorbell again rather than a key:
+once both ends have proved themselves they agree an ephemeral session key, so
+holding the passphrase no longer means being able to read everybody's roster off
+the wire. `docs/Pegasus_Sync.md` §4.3 has the exchange and an honest account of
+what it does and does not buy. One person may be signed in from two places at
+once, and appears once in everybody's list.
 
 Deferred by choice: rich text, mobile, a browser client, and LAN autodiscovery.
 

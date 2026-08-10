@@ -5,15 +5,15 @@ open System
 /// Wire and file format versions.
 ///
 /// Protocol went to 2 when Hello started carrying a public key and the identity
-/// proof frames appeared, and to 3 when Roster did. It is actually sent, in
-/// Hello, which it never was at 1 -- two builds that disagreed used to discover
-/// it as a decode failure somewhere further down, and now say so in the first
-/// frame. Adding a tag is a protocol change even though an old build would only
-/// ever meet it by talking to a new one. See Pegasus_Format.md §1 for the file
-/// schema, which is unrelated and unchanged.
+/// proof frames appeared, to 3 when Roster did, and to 4 when Agree did. It is
+/// actually sent, in Hello, which it never was at 1 -- two builds that disagreed
+/// used to discover it as a decode failure somewhere further down, and now say
+/// so in the first frame. Adding a tag is a protocol change even though an old
+/// build would only ever meet it by talking to a new one. See Pegasus_Format.md
+/// §1 for the file schema, which is unrelated and unchanged.
 module Version =
     [<Literal>]
-    let Protocol = 3uy
+    let Protocol = 4uy
 
     [<Literal>]
     let FileSchema = 1uy
@@ -164,5 +164,18 @@ type Frame =
     /// itself, and republished whenever the set changes. A peer never sends
     /// this: two people on a socket already know who is there.
     | Roster of peers: PeerInfo[]
+    /// Half of an ephemeral key agreement: a one-session public key, and a
+    /// signature over it made with the identity key that has just been proved.
+    ///
+    /// The signature is the whole point. An unsigned ephemeral key can be
+    /// swapped in transit by whoever is carrying it, and both ends would agree
+    /// a key with the attacker rather than with each other. Signing it with the
+    /// long-term key binds "this ephemeral is mine" to an identity that was
+    /// proved by Challenge and Proof a moment earlier.
+    ///
+    /// Sent on the control channel between a client and Chariot, and nowhere
+    /// else: two peers already seal under a join code no intermediary has, so
+    /// they have nothing to agree. See Agreement.fs, and Pegasus_Sync.md §4.3.
+    | Agree of ephemeral: byte[] * signature: byte[]
 
 exception ProtocolError of string

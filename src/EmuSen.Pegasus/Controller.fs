@@ -264,7 +264,10 @@ type Notepad(root: string, self: Identity, trust: PeerInfo -> byte[] -> Result<u
 
         task {
             try
-                let! r = RelayClient.connectAsync host port passphrase self token
+                // The same trust rule the peers get. Chariot proves itself now,
+                // so a server whose key changed is refused on exactly the terms
+                // a person whose key changed is refused.
+                let! r = RelayClient.connectAsync host port passphrase self trust token
                 r.RosterChanged.Add rosterChanged.Trigger
                 r.PresenceChanged.Add remotePresence.Trigger
                 r.PeerJoined.Add(fun p -> setState (Connected p.Handle))

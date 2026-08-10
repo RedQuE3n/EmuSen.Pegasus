@@ -277,6 +277,26 @@ either "they reinstalled" or "this is not them" and only a person can tell
 which. The refusal message names both fingerprints so that person has what they
 need to decide.
 
+### 7.1 A relay server is pinned in the same table
+
+`EmuSen.Chariot` now sends a `Hello` carrying its own public key and signs the
+nonce a client challenges it with, so a client can tell one server from another
+rather than trusting whoever knows the passphrase — `Chariot_Design.md` §7.1.
+
+The client side of that is this table, unchanged and unextended. A server has a
+handle, obeys the same grammar, and is pinned by the same rule. That means **a
+server and a person share one namespace of handles per owner**, which is a
+deliberate choice rather than an oversight: one name, one key, whatever is
+behind it. A peer who turned up claiming the name your relay uses would be
+refused, and so would a relay claiming a friend's name, which are both the right
+answers.
+
+The alternative — a second table for servers — would have meant a second
+implementation of first-sighting-wins, a second refusal message, and a second
+place for the `INSERT OR REPLACE` mistake above to be made. The pass that added
+this was smaller for reusing what was here, and the guard that a changed server
+key is refused was watched failing before it was trusted.
+
 ## 8. Remembered servers, and the one column that is not there
 
 Signing in to a relay is per-identity bookkeeping like everything else in §3, so

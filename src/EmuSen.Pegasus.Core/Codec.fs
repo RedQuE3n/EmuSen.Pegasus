@@ -35,6 +35,9 @@ module Codec =
     let private TagRoster = 8uy
 
     [<Literal>]
+    let private TagAgree = 9uy
+
+    [<Literal>]
     let private TagDirect = 0uy
 
     [<Literal>]
@@ -107,6 +110,14 @@ module Codec =
                 for peer in peers do
                     writePeer w peer)
         | Proof signature -> writeWith TagProof (fun w -> w.Write signature)
+        | Agree(ephemeral, signature) ->
+            // Length-prefixed rather than "the rest of the frame", for the same
+            // reason Hello's key is: two variable-length blobs in one frame need
+            // a boundary that is stated instead of inferred.
+            writeWith TagAgree (fun w ->
+                w.Write ephemeral.Length
+                w.Write ephemeral
+                w.Write signature)
 
     let decode (body: byte[]) : Frame =
         if body.Length = 0 then
@@ -134,6 +145,15 @@ module Codec =
 
                 Roster(Array.init count (fun _ -> readPeer r))
             | TagProof -> Proof payload
+            | TagAgree ->
+                use r = new BinaryReader(new MemoryStream(payload), UTF8Encoding false)
+                let length = r.ReadInt32()
+
+                if length < 0 || length > payload.Length then
+                    raise (ProtocolError $"Agree declares a {length}-byte key inside a {payload.Length}-byte frame")
+
+                let ephemeral = r.ReadBytes length
+                Agree(ephemeral, r.ReadBytes(payload.Length - 4 - length))
             | TagHello ->
                 use r = new BinaryReader(new MemoryStream(payload), UTF8Encoding false)
                 let protocol = r.ReadByte()

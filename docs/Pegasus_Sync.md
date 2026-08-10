@@ -74,11 +74,16 @@ A frame is a tag byte followed by a payload:
     6  Challenge   a random nonce
     7  Proof       a signature over the other side's nonce
     8  Roster      int32 count, then that many peers
+    9  Agree       int32-length-prefixed ephemeral public key, then a
+                   signature over it
 
-Tag 8 is Chariot's, not a peer's: two people on a socket already know who is
-there. `Chariot_Design.md` §6 covers what a roster is for. The count is checked
-against the frame it arrived in before anything is allocated, because a count is
-a claim until it has been looked at.
+Tags 8 and 9 are Chariot's, not a peer's. Two people on a socket already know who
+is there, and they already seal under a join code no intermediary has, so they
+have nothing to agree — a peer that sends either is refused. `Chariot_Design.md`
+§6 covers what a roster is for and §4.3 below covers what an agreement is for.
+The roster count is checked against the frame it arrived in before anything is
+allocated, because a count is a claim until it has been looked at; `Agree` states
+the boundary between its two blobs for the same reason `Hello` does.
 
 Strings use `BinaryWriter`'s 7-bit-encoded length prefix. Multi-byte integers are
 little endian.
@@ -252,6 +257,76 @@ A test drives the case directly: two clients, neither willing to be invited, one
 opening 300ms before the other. Removing the re-greeting turns it red and leaves
 the other four relay tests green, which is what makes it a test of this and not
 of the relay in general.
+
+### 4.3 Signing in to a relay, and why the passphrase stopped being a key
+
+Two things were wrong with the previous exchange, and they are the same thing
+seen from opposite ends.
+
+**Chariot did not prove itself.** It answered a client's `Challenge` with an HMAC
+over the passphrase key — a proof that it held the passphrase, which every client
+holds, and therefore a proof of nothing about *who* it was. A client's only
+assurance it had reached the right server was that the server knew a secret
+shared with everybody.
+
+**The passphrase read everything.** Control traffic — sign-in, rosters — was
+sealed under a key derived from that same passphrase, with the fixed salt §5
+already calls a weakness. So any client could read any other client's roster off
+the wire, and a recorded session stayed readable to whoever later learned one
+shared secret. The passphrase was meant to be a doorbell and had quietly become a
+key.
+
+The exchange now runs:
+
+    door    Handshake over the passphrase key, unchanged. The doorbell.
+    →       Hello   the server's peer info and public key
+    →       Challenge  the server's nonce
+    ←       Hello   the client's peer info and public key
+    ←       Challenge  the client's nonce
+    ←       Proof   the client signs the server's nonce
+    →       Proof   the server signs the client's nonce
+    →       Agree   the server's ephemeral, signed
+    ←       Agree   the client's ephemeral, signed
+    ...     everything after this is sealed under the agreed key
+
+Both `Agree` frames go under the door key, because the session key is the thing
+they produce, and both ends switch immediately after — the server on receiving
+the client's, the client on sending it. There is no frame in between, so there is
+no window in which one end is talking in a key the other is not reading.
+
+Four properties are worth stating precisely, because a key agreement is easy to
+describe as stronger than it is:
+
+- **The client pins the server's key**, in the same table and by the same rule it
+  pins a person's: trust on first use, refuse a change — `Pegasus_Identity.md`
+  §7. A server and a person therefore share one namespace of handles per owner,
+  which is deliberate. One name, one key.
+- **The signature on an ephemeral is not decoration.** An unsigned ephemeral can
+  be replaced by whoever carries it, and both ends would agree a key with the
+  attacker instead of with each other. Each side signs its own ephemeral, under
+  its own domain tag, over the nonce the *other* side challenged it with — so a
+  signed ephemeral recorded from one session cannot be replayed into another.
+- **Nothing derives a key before the far side has proved itself.** An ephemeral
+  signed by an unproven identity is an ephemeral signed by anybody, which would
+  be unauthenticated Diffie-Hellman and no better than the passphrase it
+  replaces.
+- **Note traffic is untouched**, and must stay so. It is sealed under a join code
+  Chariot never has, which is the property the whole design rests on; wrapping it
+  in a second key agreed *with* the server would be strictly worse.
+
+The KDF is `ECDiffieHellman.DeriveKeyFromHash` on P-256 — SHA-256 over
+`salt ‖ Z ‖ tag`, the concatenation KDF of SP 800-56A — producing exactly the 32
+bytes AES-256-GCM wants with nothing imported that was not already here. The salt
+is both nonces, server's first, so two connections between the same pair never
+agree the same key. P-256 rather than X25519 for the same reason `Identity` uses
+it: `Pegasus_Identity.md` §5.
+
+**What this does and does not buy.** Control traffic now has forward secrecy: the
+ephemeral private halves are never stored and are gone when the connection ends,
+so a recording is not readable later even by someone who learns the passphrase.
+It does *not* make the passphrase strong — it is still a fixed-salt PBKDF2 over a
+shared secret, and it is still what decides who may open a connection at all. It
+buys the passphrase back its intended job.
 
 ## 5. What the encryption is and is not
 

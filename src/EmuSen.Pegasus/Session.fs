@@ -173,6 +173,12 @@ type Conversation(send: Frame -> Threading.Tasks.Task<unit>, self: Identity, doc
                 // Chariot's, not a peer's. Two people on a socket already know
                 // who is there.
                 raise (ProtocolError "a peer sent a roster")
+            | Agree _ ->
+                // Control-channel only. Two peers already seal under a join
+                // code no intermediary has, so there is nothing here to agree,
+                // and a peer proposing one is proposing a key that a relay
+                // between us could have chosen. Pegasus_Sync.md §4.3.
+                raise (ProtocolError "a peer proposed a key agreement")
         }
 
     interface IDisposable with

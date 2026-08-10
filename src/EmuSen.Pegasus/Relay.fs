@@ -15,14 +15,30 @@ open System.Threading
 /// cannot learn a word of what.
 ///
 /// ONE SOCKET, TWO KEY DOMAINS, and everything here follows from that. Frames
-/// addressed to Chariot -- signing in, the roster -- are sealed under the key
-/// derived from the server passphrase. Frames for a peer are sealed under the
-/// join code and merely addressed through Chariot. The envelope is what keeps
-/// them apart: `Direct` is Chariot's, `ToHandle` and `FromHandle` are somebody
-/// else's and are passed through without this class being able to read them
-/// either, since it holds the join code only for the conversations it opened.
-type Relay(stream: Stream, self: Identity, passphrase: string) =
-    let key = Crypto.deriveKey passphrase
+/// addressed to Chariot -- signing in, the roster -- are sealed under the
+/// control key. Frames for a peer are sealed under the join code and merely
+/// addressed through Chariot. The envelope is what keeps them apart: `Direct` is
+/// Chariot's, `ToHandle` and `FromHandle` are somebody else's and are passed
+/// through without this class being able to read them either, since it holds the
+/// join code only for the conversations it opened.
+///
+/// THE CONTROL KEY IS NOT THE PASSPHRASE, and that is the point of this pass.
+/// The passphrase opens the door and seals the sign-in exchange, and then both
+/// ends agree an ephemeral key and everything after is sealed under that. Before
+/// it, every client held the key to every other client's roster, and a recording
+/// stayed readable to whoever later learned one shared secret. Agreement.fs
+/// carries the argument; Pegasus_Sync.md §4.3 is the exchange.
+///
+/// `trust` is the same trust-on-first-use rule a peer gets, pointed at the
+/// server. Chariot now sends a Hello carrying its own key and signs a challenge
+/// with it, so a server whose key has changed is refused exactly the way a
+/// person whose key has changed is refused -- one implementation, one table, one
+/// thing to reason about.
+type Relay(stream: Stream, self: Identity, passphrase: string, trust: PeerInfo -> byte[] -> Result<unit, string>) =
+    /// The doorbell: what Handshake ran on, and what the sign-in exchange itself
+    /// is sealed under. Everything after the agreement uses the session key.
+    let doorKey = Crypto.deriveKey passphrase
+
     let cts = new CancellationTokenSource()
     let rosterChanged = Event<PeerInfo[]>()
     let peerJoined = Event<PeerInfo>()
@@ -39,6 +55,18 @@ type Relay(stream: Stream, self: Identity, passphrase: string) =
     let conversations = ConcurrentDictionary<string, Conversation * byte[]>()
 
     let mutable roster: PeerInfo[] = [||]
+
+    /// The key `Direct` traffic is sealed under. Starts as the door key,
+    /// because the sign-in exchange has to be sealed under something both ends
+    /// already share, and is replaced by the agreed session key the moment that
+    /// exchange completes. Both ends switch at the same frame — after the two
+    /// Agree frames, which are themselves under the door key — so there is no
+    /// window in which one is talking in a key the other is not reading.
+    let mutable controlKey = doorKey
+
+    /// Who Chariot said it was, once it has proved it. None until then, and
+    /// nothing here treats an unproven server as a server.
+    let mutable server: PeerInfo option = None
 
     /// What to do when somebody addresses us first. Without this a
     /// conversation could only ever be opened by whoever spoke first, and the
@@ -57,8 +85,16 @@ type Relay(stream: Stream, self: Identity, passphrase: string) =
                 writeLock.Release() |> ignore
         }
 
+    /// Says something to Chariot under whichever key is current. Reading the
+    /// mutable at call time rather than capturing it is what makes the switch a
+    /// single assignment instead of a rewiring.
     let say frame =
-        writeSealed Direct (Crypto.seal key (Codec.encode frame))
+        writeSealed Direct (Crypto.seal controlKey (Codec.encode frame))
+
+    /// Says something under a stated key, for the two frames that must go under
+    /// the door key no matter what the current one is.
+    let sayUnder k frame =
+        writeSealed Direct (Crypto.seal k (Codec.encode frame))
 
     /// One conversation, wired up and filed under the correspondent's handle.
     /// Both ways of starting one -- opening deliberately and being contacted
@@ -88,24 +124,91 @@ type Relay(stream: Stream, self: Identity, passphrase: string) =
     member _.Closed = closed.Publish
     member _.Self = self.Peer
 
-    /// The sign-in Chariot expects: it challenges, we say who we are and sign
-    /// what it sent. Identical to the peer exchange because it is the peer
-    /// exchange -- see Conversation, and Chariot_Design.md §9.1 in the
-    /// EmuSen.Chariot repository.
+    /// Who the server proved itself to be, once it has. None before sign-in
+    /// completes, and there is no unproven form of this to accidentally show.
+    member _.Server = server
+
+    /// Signing in: both ends prove who they are, and then agree a key nobody
+    /// holding the passphrase can derive.
+    ///
+    /// It is the peer exchange with one thing added, and it is mutual in both
+    /// directions now. Chariot sends a Hello carrying its own key and signs the
+    /// nonce we send it, so `trust` refuses a server whose key changed on the
+    /// same terms it refuses a person whose key changed. Before this, possession
+    /// of the passphrase was the client's ONLY assurance it had reached the
+    /// right server, which meant anybody holding it could stand one up and be
+    /// believed.
+    ///
+    /// Then the agreement. Both Agree frames go under the door key — they have
+    /// to, since the session key is what they are for — and everything after is
+    /// under the key they produce. The order below is the order of the frames on
+    /// the wire, and the guards are what keep it from being merely the order we
+    /// hope for: nothing derives a key before the far side has proved itself,
+    /// because an ephemeral signed by an unproven identity is an ephemeral
+    /// signed by anybody. Pegasus_Sync.md §4.3.
     member _.SignInAsync(ct: CancellationToken) =
         task {
+            use ephemeral = new Agreement.Ephemeral()
+
+            /// Ours, sent in our Challenge and expected inside Chariot's Proof.
+            let ourNonce = Crypto.newChallenge ()
+            let mutable theirNonce: byte[] option = None
+            let mutable serverKey: byte[] option = None
+            let mutable serverProven = false
             let mutable signedIn = false
 
             while not signedIn do
                 let! envelope, payload = Framing.readSealed stream ct
 
-                if envelope = Direct then
-                    match Codec.decode (Crypto.openSealed key payload) with
-                    | Challenge nonce ->
-                        do! say (Hello(self.Peer, self.PublicKey, Version.Protocol))
-                        do! say (Proof(Attestation.prove self nonce))
-                        signedIn <- true
-                    | _ -> ()
+                if envelope <> Direct then
+                    raise (ProtocolError "a routed frame arrived before sign-in")
+
+                match Codec.decode (Crypto.openSealed doorKey payload) with
+                | Hello(who, offered, protocol) ->
+                    if protocol <> Version.Protocol then
+                        raise (ProtocolError $"server speaks protocol {protocol}, this build speaks {Version.Protocol}")
+
+                    match trust who offered with
+                    | Error why -> raise (ProtocolError why)
+                    | Ok() ->
+                        server <- Some who
+                        serverKey <- Some offered
+
+                | Challenge nonce ->
+                    theirNonce <- Some nonce
+                    // Our Challenge before our Proof, so the far side already
+                    // holds the nonce it has to sign by the time it decides
+                    // whether to believe us.
+                    do! sayUnder doorKey (Hello(self.Peer, self.PublicKey, Version.Protocol))
+                    do! sayUnder doorKey (Challenge ourNonce)
+                    do! sayUnder doorKey (Proof(Attestation.prove self nonce))
+
+                | Proof signature ->
+                    match server, serverKey with
+                    | Some who, Some offered ->
+                        match Attestation.verify offered who.Id ourNonce signature with
+                        | Error why -> raise (ProtocolError why)
+                        | Ok() -> serverProven <- true
+                    | _ -> raise (ProtocolError "the server proved itself before saying who it was")
+
+                | Agree(theirs, signature) ->
+                    match serverKey, theirNonce with
+                    | Some offered, Some nonce when serverProven ->
+                        let sessionSalt = Agreement.salt nonce ourNonce
+
+                        match ephemeral.Accept(offered, theirs, signature, ourNonce, sessionSalt) with
+                        | Error why -> raise (ProtocolError why)
+                        | Ok agreed ->
+                            // Ours under the door key, because that is the last
+                            // thing the far side can read until it has ours.
+                            // Only then does the key change, and only then is
+                            // sign-in over.
+                            do! sayUnder doorKey (ephemeral.Offer(self, nonce))
+                            controlKey <- agreed
+                            signedIn <- true
+                    | _ -> raise (ProtocolError "the server offered a key agreement before proving who it was")
+
+                | other -> raise (ProtocolError $"expected a sign-in frame, got {other.GetType().Name}")
         }
 
     /// Says what to do with an unexpected correspondent: which note they are
@@ -157,7 +260,7 @@ type Relay(stream: Stream, self: Identity, passphrase: string) =
 
                     match envelope with
                     | Direct ->
-                        match Codec.decode (Crypto.openSealed key payload) with
+                        match Codec.decode (Crypto.openSealed controlKey payload) with
                         | Roster peers ->
                             roster <- peers
                             rosterChanged.Trigger peers
@@ -209,7 +312,14 @@ type Relay(stream: Stream, self: Identity, passphrase: string) =
 /// Connects to a Chariot.
 module RelayClient =
 
-    let connectAsync (host: string) (port: int) (passphrase: string) (self: Identity) (ct: CancellationToken) =
+    let connectAsync
+        (host: string)
+        (port: int)
+        (passphrase: string)
+        (self: Identity)
+        (trust: PeerInfo -> byte[] -> Result<unit, string>)
+        (ct: CancellationToken)
+        =
         task {
             let client = new TcpClient()
             do! client.ConnectAsync(host, port, ct)
@@ -218,8 +328,24 @@ module RelayClient =
 
             // The same front-door handshake a peer does, for the same reason:
             // prove you know the code before anything is allocated for you.
+            // This is all the passphrase does now -- SignInAsync replaces it
+            // with an agreed key before anything worth reading is said.
             do! Handshake.asJoiner stream (Crypto.deriveKey passphrase) ct
-            let relay = new Relay(stream, self, passphrase)
-            do! relay.SignInAsync ct
-            return relay
+            let relay = new Relay(stream, self, passphrase, trust)
+            let mutable refused: exn option = None
+
+            try
+                do! relay.SignInAsync ct
+            with e ->
+                // A server that refuses to prove itself leaves nothing worth
+                // keeping. Disposed here rather than handed back, so a caller
+                // cannot accidentally hold a Relay that never signed in. The
+                // failure is carried out rather than rethrown in the handler,
+                // because a task expression will not let it be rethrown there.
+                (relay :> IDisposable).Dispose()
+                refused <- Some e
+
+            match refused with
+            | Some e -> return raise e
+            | None -> return relay
         }

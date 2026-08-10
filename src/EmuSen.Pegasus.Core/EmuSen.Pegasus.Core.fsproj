@@ -40,12 +40,23 @@
 
   <ItemGroup>
     <!-- Identity.OfPrivateKey and ExportPrivateKey are internal because nothing
-         outside the identity file's own read and write path has business with a
-         private key. The store lives in the application and the guard asserting
-         the key never reaches disk unsealed lives in the tests, so both need to
-         see in. Chariot deliberately gets neither: it verifies signatures. -->
+         outside an identity store's own read and write path has business with a
+         private key. The desktop store lives in the application and the guard
+         asserting the key never reaches disk unsealed lives in the tests, so
+         both need to see in.
+
+         CORRECTION. This list used to end "Chariot deliberately gets neither:
+         it verifies signatures", and that stopped being true when Chariot got
+         an identity of its own and started signing challenges with it — a
+         server that cannot prove itself is a server anyone holding the
+         passphrase can impersonate, which is Chariot_Design.md §9.2. Chariot
+         therefore has an identity store, which is the condition for being on
+         this list rather than an exception to it. It still holds no client's
+         private key and never will. -->
     <InternalsVisibleTo Include="EmuSen.Pegasus" />
     <InternalsVisibleTo Include="EmuSen.Pegasus.Tests" />
+    <InternalsVisibleTo Include="EmuSen.Chariot" />
+    <InternalsVisibleTo Include="EmuSen.Chariot.Tests" />
   </ItemGroup>
 
   <ItemGroup>
@@ -54,6 +65,7 @@
     <Compile Include="Crypto.fs" />
     <Compile Include="Identity.fs" />
     <Compile Include="Attestation.fs" />
+    <Compile Include="Agreement.fs" />
     <Compile Include="Framing.fs" />
     <Compile Include="Handshake.fs" />
   </ItemGroup>

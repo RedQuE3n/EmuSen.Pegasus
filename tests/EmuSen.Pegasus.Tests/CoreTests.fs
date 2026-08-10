@@ -512,3 +512,112 @@ let ``the workspace path is not hardcoded to one platform`` () =
     let root = Controller.defaultWorkspaceRoot
     Assert.False(String.IsNullOrWhiteSpace root)
     Assert.True(Path.IsPathRooted root)
+
+// ---------------------------------------------------------------------------
+// Key agreement
+// ---------------------------------------------------------------------------
+
+/// Offer returns a Frame because that is what goes on the wire; these tests
+/// want the two halves. Pattern-matching it inline would be an incomplete match
+/// in every one of them, and a warning repeated five times is a warning nobody
+/// reads.
+let private halves (frame: Frame) =
+    match frame with
+    | Agree(ephemeral, signature) -> ephemeral, signature
+    | other -> failwith $"expected an Agree, got {other.GetType().Name}"
+
+[<Fact>]
+let ``an Agree frame survives a round trip with both blobs intact`` () =
+    // Two variable-length blobs in one frame, so the boundary between them is
+    // stated rather than inferred. A codec that got it wrong would hand a
+    // truncated key to ECDH and the failure would look like a bad signature.
+    let ephemeral = Array.init 91 byte
+    let signature = Array.init 71 (fun i -> byte (255 - i))
+
+    match Codec.decode (Codec.encode (Agree(ephemeral, signature))) with
+    | Agree(gotEphemeral, gotSignature) ->
+        Assert.Equal<byte[]>(ephemeral, gotEphemeral)
+        Assert.Equal<byte[]>(signature, gotSignature)
+    | other -> failwith $"decoded to {other.GetType().Name}"
+
+[<Fact>]
+let ``two ends agree the same key and a passphrase holder cannot`` () =
+    use serverId = Identity.Generate(Handle.Parse "chariot")
+    use clientId = Identity.Generate(Handle.Parse "alice")
+    use server = new Agreement.Ephemeral()
+    use client = new Agreement.Ephemeral()
+
+    let serverNonce = Crypto.newChallenge ()
+    let clientNonce = Crypto.newChallenge ()
+    let salt = Agreement.salt serverNonce clientNonce
+
+    // Each signs its own ephemeral over the nonce the OTHER side challenged it
+    // with, so a signed ephemeral recorded from one session cannot be replayed
+    // into another.
+    let serverEphemeral, serverSignature = halves (server.Offer(serverId, clientNonce))
+    let clientEphemeral, clientSignature = halves (client.Offer(clientId, serverNonce))
+
+    let atClient =
+        client.Accept(serverId.PublicKey, serverEphemeral, serverSignature, clientNonce, salt)
+
+    let atServer =
+        server.Accept(clientId.PublicKey, clientEphemeral, clientSignature, serverNonce, salt)
+
+    match atClient, atServer with
+    | Ok theirs, Ok ours ->
+        Assert.Equal<byte[]>(theirs, ours)
+        Assert.Equal(Crypto.KeyBytes, theirs.Length)
+
+        // The point of the pass: the key is not derivable from the passphrase,
+        // which is the only thing every client shares.
+        Assert.NotEqual<byte[]>(Crypto.deriveKey "a-server-passphrase", theirs)
+    | outcome -> failwith $"agreement refused: {outcome}"
+
+[<Fact>]
+let ``an ephemeral signed by somebody else is refused`` () =
+    // The unauthenticated Diffie-Hellman failure, made concrete. Whoever
+    // carries an unsigned ephemeral can replace it and both ends agree a key
+    // with the carrier instead of with each other. The signature is what stops
+    // that, so this is the test that the signature is actually checked.
+    use serverId = Identity.Generate(Handle.Parse "chariot")
+    use impostorId = Identity.Generate(Handle.Parse "chariot")
+    use server = new Agreement.Ephemeral()
+    use client = new Agreement.Ephemeral()
+
+    let clientNonce = Crypto.newChallenge ()
+    let salt = Agreement.salt (Crypto.newChallenge ()) clientNonce
+    let ephemeral, _ = halves (server.Offer(serverId, clientNonce))
+
+    // The right ephemeral, signed by the wrong identity.
+    let _, forged = halves (server.Offer(impostorId, clientNonce))
+
+    match client.Accept(serverId.PublicKey, ephemeral, forged, clientNonce, salt) with
+    | Ok _ -> failwith "a key agreement was accepted on somebody else's signature"
+    | Error why -> Assert.Contains("did not sign", why)
+
+[<Fact>]
+let ``an ephemeral signed over a different nonce is refused`` () =
+    // Replay, specifically. Without the nonce in the signed payload, a signed
+    // ephemeral recorded once is good forever.
+    use serverId = Identity.Generate(Handle.Parse "chariot")
+    use server = new Agreement.Ephemeral()
+    use client = new Agreement.Ephemeral()
+
+    let salt = Crypto.newChallenge ()
+    let ephemeral, signature = halves (server.Offer(serverId, Crypto.newChallenge ()))
+
+    match client.Accept(serverId.PublicKey, ephemeral, signature, Crypto.newChallenge (), salt) with
+    | Ok _ -> failwith "a key agreement from another session was accepted"
+    | Error why -> Assert.Contains("did not sign", why)
+
+[<Fact>]
+let ``a key that is not a P-256 public key is refused rather than thrown`` () =
+    // A relay talks to strangers, so a malformed frame is an ordinary event.
+    use serverId = Identity.Generate(Handle.Parse "chariot")
+    use client = new Agreement.Ephemeral()
+    let nonce = Crypto.newChallenge ()
+    let rubbish = Array.init 64 byte
+
+    match client.Accept(serverId.PublicKey, rubbish, serverId.Sign(Agreement.payload rubbish nonce), nonce, nonce) with
+    | Ok _ -> failwith "rubbish was accepted as a public key"
+    | Error why -> Assert.Contains("P-256", why)
