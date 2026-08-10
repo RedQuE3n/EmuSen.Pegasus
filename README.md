@@ -181,3 +181,11 @@ disconnects" — turned out to be wrong for a reason worth reading:
 
 GPL-3.0-or-later. Pegasus links `EmuSen.LunaP`, which is GPL-3.0, so this is a
 consequence rather than a choice; `docs/Pegasus_Design.md` §7.1 records it.
+
+The `LICENSE` file carrying the full text arrived with the first binary release,
+and it had been missing until then. That is worth stating plainly rather than
+quietly correcting: the repository declared a licence in prose for its whole life
+without shipping the text of one. GPL-3.0 §4 and §5 require the licence to be
+conveyed *with* the work, and a release page offering compiled executables
+conveys the work to people who will never open this repository. Source for those
+binaries is this repository at the `v0.1.0` tag.

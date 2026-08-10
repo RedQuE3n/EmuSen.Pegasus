@@ -19,6 +19,19 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>EmuSen.Pegasus</AssemblyName>
     <RootNamespace>EmuSen.Pegasus</RootNamespace>
+
+    <!-- The APPLICATION's version, and it is deliberately not the core's. This
+         repository holds two things that are released separately: the core is a
+         package on `core-v*` tags and is already at 0.2.2, while this is the
+         desktop program and starts at 0.1.0 on a `v*` tag. §7.1 predicted this
+         collision and reserved the namespace for it before there was anything
+         to put in it, which is why the first application release needed no tag
+         scheme invented under time pressure.
+
+         The two numbers will drift apart and that is correct: a protocol change
+         forces the core's version, a change to the window forces this one, and
+         tying them would make every frame edit look like a new notepad. -->
+    <Version>0.1.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
