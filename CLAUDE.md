@@ -78,7 +78,6 @@ Three habits this project keeps and should keep:
     src/EmuSen.Pegasus/        the desktop application
     tests/EmuSen.Pegasus.Tests/  headless: unit, property, socket, UI, startup
     docs/                      the man pages
-    local-packages/            folder feed for the EmuSen toolkit packages
 
 Two assemblies, and the split is a recorded decision (`Design §7`), not an
 invitation to make more. **Nothing goes in the core that a headless server would
@@ -144,10 +143,11 @@ Commit, push and merge only when asked.
 ## Build notes
 
 - .NET 10 (`net10.0`), SDK 10.0.110.
-- `EmuSen.LunaP`, `EmuSen.Galaxia`, `EmuSen.Cauldron` come from a folder feed
-  at `local-packages/`, populated by `dotnet pack` from a checkout of
-  EmuSen-Project. `NuGet.config` points at it. `Design §7.1` records why this
-  is a package rather than a submodule or a vendored copy.
+- `EmuSen.LunaP` comes from **nuget.org** and is the only toolkit package this
+  repository takes. `NuGet.config` is `<clear />` plus nuget.org, so a bare
+  clone builds with `dotnet build` and nothing else. `Design §7.1` records why
+  it is a package rather than a submodule or a vendored copy, and why Galaxia
+  and Cauldron are no longer carried alongside it.
 - GPL-3.0-or-later, a consequence of linking LunaP (`Design §7.1`).
 - `Microsoft.Data.Sqlite` **must** be accompanied by an explicit
   `SQLitePCLRaw.bundle_e_sqlite3` 3.0.5 pin. Alone it resolves a transitive

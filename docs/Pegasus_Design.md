@@ -380,9 +380,9 @@ other projects consume it. Four ways to cross that boundary were considered:
   silently dropped `UseX11` on Wayland.
 - **Publish LunaP as a NuGet package.** Adopted.
 
-`EmuSen.LunaP` is packed at 0.2.0, and **it is the only package this repository
-hand-carries.** That is a correction: it used to be three, from a repository
-that is no longer where the toolkit lives.
+`EmuSen.LunaP` is at **0.3.0**, restored from nuget.org like any other package.
+It is the only package of the toolkit's this repository takes at all — a
+correction twice over: it used to be three, and they used to be hand-carried.
 
 LunaP declared `EmuSen.Galaxia` and `EmuSen.Cauldron` as hard dependencies, so
 both had to be packed and copied here alongside it. They are gone because LunaP
@@ -417,12 +417,19 @@ Two limitations, stated rather than discovered later:
   repository builds with `dotnet build` and nothing else. This limitation stood
   for the whole of the toolkit's life outside EmuSen and is the last thing the
   split was waiting on.
-- Every package involved is stamped `0.1.0` and stays there. NuGet caches by id
-  and version, so repacking after a change does not propagate and a build fails
-  on code that was just written as though it did not exist. The workaround is to
-  delete the cached folder under `~/.nuget/packages/`; the fix is version
-  stamping, which is deliberately deferred. `EmuSen.Chariot`'s `NuGet.config`
-  records the trap where somebody will hit it.
+- ~~Every package involved is stamped `0.1.0` and stays there~~ — **resolved.**
+  LunaP's published version comes from the git tag rather than from its csproj,
+  so it cannot be written in two places and disagree with itself, and the tag is
+  what triggers the publish. This repository moved 0.2.0 → 0.3.0 by editing one
+  line.
+
+  The trap the old wording described has not gone anywhere; it has only stopped
+  being reachable by accident. NuGet still caches by id **and** version, so it
+  bites the moment somebody consumes a package from a local folder while
+  iterating on both repositories at once — repack at a version already restored
+  and the build fails on code that was just written. Delete the cached folder
+  under `~/.nuget/packages/`, or use a prerelease suffix that changes every pack.
+  `EmuSen.Chariot`'s `NuGet.config` records it where somebody will hit it.
 
 A limitation that used to be here and no longer applies: `EmuSen.Galaxia` ships
 its catalogue schema as `.sql` files that do not travel in its package, which
