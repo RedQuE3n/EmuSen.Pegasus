@@ -81,7 +81,7 @@
          why Avalonia is not named here - docs/Pegasus_Design.md §8. It is a
          package rather than a ProjectReference because it lives in another
          repository; NuGet.config says where it is found - §7.1. -->
-    <PackageReference Include="EmuSen.LunaP" Version="0.3.0" />
+    <PackageReference Include="EmuSen.LunaP" Version="0.5.0" />
   </ItemGroup>
 
 </Project>

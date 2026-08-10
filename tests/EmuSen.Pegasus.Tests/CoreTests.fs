@@ -483,8 +483,11 @@ let ``the toolkit brings nothing of EmuSen with it`` () =
     // packages this repository has to hand-carry. LunaP used to declare
     // EmuSen.Galaxia and EmuSen.Cauldron as hard dependencies, so both had to be
     // packed and copied into local-packages/ beside it; it now declares Avalonia
-    // and nothing else. See Pegasus_Design.md §7.1, and EmuSen_LunaP.md §19 in
-    // EmuSen-Project for what moved and where.
+    // and nothing else. See Pegasus_Design.md §7.1, and LunaP.md §19 in the
+    // EmuSen.LunaP repository for what moved and where. (That document was
+    // EmuSen_LunaP.md in EmuSen-Project when this comment was written; it left
+    // with the toolkit. The old name is the sort of citation LunaP.md §21.6
+    // found fifty-five of, which is why it is corrected here rather than left.)
     //
     // A limitation this shares with EmuSen's own version of the guard, found
     // there by sabotaging it and watching it pass: GetReferencedAssemblies

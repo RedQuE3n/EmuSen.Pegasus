@@ -1,6 +1,7 @@
 module EmuSen.Pegasus.Shell
 
 open System
+open Avalonia
 open Avalonia.Controls
 open Avalonia.Layout
 open Avalonia.Media
@@ -29,9 +30,19 @@ let applyTheme (app: Avalonia.Application) =
 type PegasusWindow(pad: Notepad, book: ServerBook) as this =
     inherit ToolWindow()
 
-    let notes = ListBox(MinWidth = 190.0)
-    let newName = TextBox(PlaceholderText = "new note", Width = 150.0)
+    let notes = ListBox(MinWidth = 190.0).AccessibleName("Notes")
 
+    let newName =
+        TextBox(PlaceholderText = "new note", Width = 150.0)
+            .AccessibleName("New note name")
+
+    /// THE CONTROL THE WHOLE APPLICATION EXISTS FOR, and it announced as "edit"
+    /// and nothing else -- no name, and not even a placeholder to fall back on.
+    /// It is renamed as notes are opened, in refreshNotes, so it says which note
+    /// you are in rather than merely that you are in one.
+    ///
+    /// Padding because text pressed against the border of a box you are going to
+    /// spend an hour in is tiring to read.
     let editor =
         TextBox(
             AcceptsReturn = true,
@@ -39,13 +50,28 @@ type PegasusWindow(pad: Notepad, book: ServerBook) as this =
             TextWrapping = TextWrapping.Wrap,
             FontFamily = FontFamily "monospace",
             VerticalAlignment = VerticalAlignment.Stretch,
-            VerticalContentAlignment = VerticalAlignment.Top
+            VerticalContentAlignment = VerticalAlignment.Top,
+            Padding = Thickness(10.0, 8.0)
         )
+            .AccessibleName("Note")
 
-    let address = TextBox(PlaceholderText = "address", Width = 130.0, Text = "127.0.0.1")
-    let port = TextBox(PlaceholderText = "port", Width = 70.0)
-    let code = TextBox(PlaceholderText = "join code", Width = 170.0)
-    let status = Ui.Hint "offline"
+    let address =
+        TextBox(PlaceholderText = "address", Width = 130.0, Text = "127.0.0.1")
+            .AccessibleName("Peer address")
+
+    let port = TextBox(PlaceholderText = "port", Width = 70.0).AccessibleName("Peer port")
+
+    let code =
+        TextBox(PlaceholderText = "join code", Width = 170.0)
+            .AccessibleName("Join code")
+            .HelpText("You and your peer must type the same code. It is the key your notes are sealed under.")
+
+    /// Says whether this note is being shared and with whom, which showStatus
+    /// below calls the one thing a user must not be wrong about. It announces on
+    /// change for the same reason it is coloured: nobody keeps checking it. And
+    /// a colour is exactly what a screen reader cannot pass on -- the wording
+    /// differs too, but only for somebody who goes and reads it. §13.
+    let status = (Ui.Hint "offline").LiveRegion()
 
     /// The join code lives in the top row and the buddy list reads it from
     /// there, so there is one join code on screen no matter which way you pair.
@@ -72,6 +98,26 @@ type PegasusWindow(pad: Notepad, book: ServerBook) as this =
     let mutable applying = false
     let mutable syncingSelection = false
 
+    /// The editor takes the open note's name, so tabbing into it says which note
+    /// you are about to type in. With one name for all of them, switching notes
+    /// is silent -- and this is an application whose entire subject is having
+    /// several of them.
+    ///
+    /// Called from BOTH places a note can become the open one, and that is the
+    /// whole reason it is a function. Doing it inside refreshNotes alone looked
+    /// right and was not: refreshNotes runs when the window is built and when a
+    /// note is created, and selecting an existing note in the list goes through
+    /// neither, so the name stayed on whichever note happened to be open first.
+    /// A test caught it; nothing on screen would have.
+    let nameEditor () =
+        let title =
+            pad.CurrentNoteId
+            |> Option.bind (fun id -> pad.Notes |> Array.tryFind (fun n -> n.Id = id))
+            |> Option.map (fun n -> $"Note: {n.Name}")
+            |> Option.defaultValue "Note"
+
+        editor.AccessibleName title |> ignore
+
     let refreshNotes () =
         syncingSelection <- true
 
@@ -84,6 +130,8 @@ type PegasusWindow(pad: Notepad, book: ServerBook) as this =
                 | Some i -> notes.SelectedIndex <- i
                 | None -> ()
             | None -> ()
+
+            nameEditor ()
         finally
             syncingSelection <- false
 
@@ -142,12 +190,20 @@ type PegasusWindow(pad: Notepad, book: ServerBook) as this =
                 match notes.SelectedIndex with
                 | i when i >= 0 && i < pad.Notes.Length ->
                     pad.Open pad.Notes[i].Id
+                    nameEditor ()
                     pullText ()
                 | _ -> ())
 
         pad.Changed.Add(fun () -> pullText ())
         pad.ConnectionChanged.Add(fun s -> Dispatcher.UIThread.Post(fun () -> showStatus s))
 
+        // "+" is what it says on screen and that stays -- it is the right button
+        // for the job and a wider one would crowd the name box beside it. But
+        // "plus" is not a thing a screen reader can do anything with, so the
+        // accessible name says what pressing it does. This is the one control in
+        // the application whose name is not its caption, and the reason it is
+        // allowed to differ is that the caption is a symbol rather than a word:
+        // there is no "click plus" for voice control to match against anyway.
         let addNote =
             Ui.Button(
                 "+",
@@ -160,10 +216,12 @@ type PegasusWindow(pad: Notepad, book: ServerBook) as this =
                         refreshNotes ()
                         pullText ()
             )
+                .AccessibleName("Create note")
+                .HelpText("Creates a note with the name typed beside this button.")
 
         let connection =
             Ui.Row(
-                6.0,
+                8.0,
                 Ui.Button("Host", fun () -> pad.StartHosting() |> ignore),
                 address,
                 port,
@@ -183,8 +241,28 @@ type PegasusWindow(pad: Notepad, book: ServerBook) as this =
                 Ui.Button("Disconnect", fun () -> pad.Disconnect())
             )
 
-        let sidebar = Ui.Stack(6.0, Ui.Row(4.0, newName, addNote), notes)
+        let sidebar = Ui.Stack(8.0, Ui.Row(6.0, newName, addNote), notes)
         let footer = Ui.Row(14.0, whoami, status)
+
+        // NOTHING HERE HAD A MARGIN, so five docked regions met each other and
+        // the window frame with no gap at all: the connection row sat on the
+        // window edge, the note list touched the editor, and the buddy panel
+        // touched the other side of it. The window read as one dense block
+        // rather than as four areas that do different jobs.
+        //
+        // The gaps are asymmetric on purpose. 12 against the window frame and 8
+        // between neighbours, so the outer edge reads as the boundary it is and
+        // the interior seams read as lighter than it. The top and bottom strips
+        // carry a smaller gap towards the middle (6) than towards the frame
+        // (10), which keeps them attached to the work area rather than floating.
+        //
+        // The editor takes no margin of its own: it is surrounded on all four
+        // sides by things that already carry one, and adding a fifth would open
+        // a double gap everywhere they meet.
+        connection.Margin <- Thickness(12.0, 10.0, 12.0, 6.0)
+        footer.Margin <- Thickness(12.0, 6.0, 12.0, 10.0)
+        sidebar.Margin <- Thickness(12.0, 0.0, 8.0, 0.0)
+        buddies.Margin <- Thickness(8.0, 0.0, 12.0, 0.0)
 
         DockPanel.SetDock(connection, Dock.Top)
         DockPanel.SetDock(footer, Dock.Bottom)

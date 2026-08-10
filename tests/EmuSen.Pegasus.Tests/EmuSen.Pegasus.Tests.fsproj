@@ -20,6 +20,7 @@
     <Compile Include="RelayTests.fs" />
     <Compile Include="UiTests.fs" />
     <Compile Include="StartupTests.fs" />
+    <Compile Include="AccessTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

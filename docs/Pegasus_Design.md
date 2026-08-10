@@ -380,7 +380,7 @@ other projects consume it. Four ways to cross that boundary were considered:
   silently dropped `UseX11` on Wayland.
 - **Publish LunaP as a NuGet package.** Adopted.
 
-`EmuSen.LunaP` is at **0.3.0**, restored from nuget.org like any other package.
+`EmuSen.LunaP` is at **0.5.0**, restored from nuget.org like any other package.
 It is the only package of the toolkit's this repository takes at all — a
 correction twice over: it used to be three, and they used to be hand-carried.
 
@@ -420,8 +420,8 @@ Two limitations, stated rather than discovered later:
 - ~~Every package involved is stamped `0.1.0` and stays there~~ — **resolved.**
   LunaP's published version comes from the git tag rather than from its csproj,
   so it cannot be written in two places and disagree with itself, and the tag is
-  what triggers the publish. This repository moved 0.2.0 → 0.3.0 by editing one
-  line.
+  what triggers the publish. This repository moved 0.2.0 → 0.3.0, and later
+  0.3.0 → 0.5.0, by editing one line.
 
   The trap the old wording described has not gone anywhere; it has only stopped
   being reachable by accident. NuGet still caches by id **and** version, so it
@@ -807,3 +807,196 @@ session, only that the startup sequence assembles the right windows and asks to
 exit at the right times. A launch by hand remains the only evidence for the
 loop itself, and that is a reasonable place to stop: the loop is Avalonia's, not
 ours.
+
+## 13. Accessibility, and the padding that came with it
+
+Two passes over the same three window files, done together because both are
+about what the window is like to be in rather than what it does.
+
+### 13.1 The measurement
+
+LunaP's own accessibility work (`LunaP.md` §24) found that nine of the toolkit's
+controls were not in the automation tree at all. That prompted the same question
+here, and the same method answered it: `ControlAutomationPeer.CreatePeerForElement`
+is the route a screen reader's platform bridge takes, so a probe can walk a real
+window and print what assistive technology would find.
+
+Every control the keyboard can land on, with the name it announces:
+
+```
+=== SignInWindow ===          === PegasusWindow ===
+TextBox   name=""             Button  name="Host"          TextBox name=""
+TextBox   name=""             TextBox name=""              Button  name="Sign in"
+Button    name="Sign in"      TextBox name=""              Button  name="Sign out"
+Button    name="Create"       TextBox name=""              Button  name="Open note"
+                              Button  name="Join"          TextBox name=""
+-> 2 of 4 named               Button  name="Disconnect"
+                              TextBox name=""              -> 8 of 16 named
+                              Button  name="+"
+```
+
+**Ten of twenty tab stops announced as nothing at all**, and every one of the ten
+that did announce was a button reading its own caption back. Nothing in either
+window had been named; the ten were free.
+
+Three of them are worth pulling out.
+
+**The editor announced as "edit".** The control the entire application exists
+for — a shared notepad — had no accessible name and, unlike every other box in
+the window, not even a placeholder to fall back on. A user arriving on it by
+keyboard was told it was an edit field and nothing else.
+
+**The "+" button announced as "+".** It has a name, so it does not appear in the
+unnamed count, which makes it the most misleading row in the table: "plus" is
+not something a person can act on.
+
+**Eight text boxes relied on a placeholder that is not a label.** Every box
+carries a good `PlaceholderText` and it is easy to assume that is the label. It
+is a separate automation property, announced separately where it is announced at
+all, and it disappears the moment the user types a character — which is exactly
+when they might want reminding what the box was for.
+
+### 13.2 What the fix is
+
+LunaP's `.AccessibleName(…)`, `.HelpText(…)` and `.LiveRegion()`:
+
+    let handle = TextBox(PlaceholderText = "handle").AccessibleName("Handle")
+
+**This was `Access.fs` for one version, and that file is now deleted** — which is
+the plan it was written with, stated in its own header. It was three F# functions
+over `AutomationProperties`, and it existed only because this repository was on
+LunaP 0.3.0 while those helpers arrived in 0.5.0. `AutomationProperties` is plain
+Avalonia and works on both, so the accessibility of this application never had to
+wait on a package bump. §13.7 records what happened when the bump came.
+
+**The placeholders all stayed.** Both properties are set on every box, usually to
+similar words, because they do different jobs.
+
+**The editor takes the open note's name** — "Note: groceries" — so switching
+notes is not silent. This is an application whose whole subject is having several
+notes, and one name for all of them would have been the shape of the problem
+rather than a fix for it.
+
+**The "+" keeps its caption and gains a real name.** It is the only control here
+whose accessible name differs from what it says on screen, and the reason it is
+allowed to is that the caption is a symbol rather than a word: an accessible name
+that drops the visible label normally breaks voice control, but there is no
+"click plus" to match against in the first place.
+
+**Two lines announce themselves**: the window's status line and the buddy panel's
+message line. Both carry state in a **colour** — green for connected to a person,
+goldenrod for merely signed in to a server, and `showStatus`'s own comment says
+that distinction is the one thing a user must not be wrong about. A colour is
+precisely what a screen reader cannot pass on. The wording differs too, so colour
+was never the sole carrier, but only a user who goes and reads it would find out;
+`Polite` is what makes it arrive. Polite and not `Assertive` because a region
+that interrupts on every update makes an application unusable with a reader
+running, which is a worse failure than the silence it replaces.
+
+### 13.3 A defect the tests found and the screen did not
+
+The first version renamed the editor inside `refreshNotes`, which looked right
+and was not. `refreshNotes` runs when the window is built and when a note is
+created. **Selecting an existing note in the list goes through neither**, so the
+editor's name stayed on whichever note happened to be open first, and switching
+notes announced the wrong one indefinitely.
+
+Nothing on screen would have shown this — the text changes, the selection
+changes, everything looks correct — and it was caught only because the test
+switches notes *through the list*, the way a user does, rather than by calling
+the controller. It is now a `nameEditor` function called from both places a note
+can become the open one.
+
+### 13.4 The padding
+
+Nothing in the main window had a margin. Five docked regions met each other and
+the window frame with no gap at all: the connection row sat on the window edge,
+the note list touched the editor, the buddy panel touched the other side of it.
+The window read as one dense block rather than four areas doing different jobs.
+
+The gaps are asymmetric on purpose — **12 against the window frame, 8 between
+neighbours** — so the outer edge reads as the boundary it is and the interior
+seams read as lighter than it. The top and bottom strips carry a smaller gap
+towards the middle (6) than towards the frame (10), which keeps them attached to
+the work area rather than floating in it. The editor takes no margin of its own:
+it is surrounded on all four sides by things that carry one, and a fifth would
+open a double gap everywhere they meet.
+
+Inside the panels, spacing now says which controls belong together rather than
+being uniform. Address, port and passphrase sit at 6 inside a group separated
+from its neighbours by 10; handle and password do the same at 6 against 14. A
+form spaced evenly throughout reads as an undifferentiated column, and grouping
+is the cheapest thing that fixes it.
+
+The sign-in window grew from 420x330 to 460x400. At the old size the hint at the
+bottom was already close, and 24 of margin plus the wider gaps would have clipped
+it. `ToolWindow` remembers geometry per `WindowKey`, so this is the size of a
+first run and not an override of anybody's saved one.
+
+### 13.5 The guards, and seven sabotages
+
+`tests/EmuSen.Pegasus.Tests/AccessTests.fs`, nine tests. The suite is **160**.
+
+| Sabotage | Turned red |
+|---|---|
+| The editor's name removed | `the editor announces which note is open`, `the editor renames itself when another note is opened` |
+| The "+" button's name removed | `the add button still says plus and announces what it does` |
+| The status line's live region removed | `the status line and the buddy message announce themselves` |
+| The note list's name removed | `every list says what it is a list of` |
+| The passphrase box's name removed | `nothing the keyboard can reach in the main window is unnamed`, `every text box carries a name as well as its placeholder` |
+| The sidebar's margin set back to zero | `the docked regions do not touch each other or the window frame` |
+| The handle box's name removed | `nothing the keyboard can reach in the sign-in window is unnamed` |
+
+**One of these guards could not fail when it was first written, and that is the
+more useful finding.** `nothing the keyboard can reach is unnamed` walks the
+window for focusable, visible tab stops. The first draft measured and arranged
+the window but never *showed* it — and `IsEffectivelyVisible` is false for every
+control in a window that was never shown, so the walk found nothing and the
+assertion passed by having nothing to check. §5's rule is that a test which
+cannot fail is not a test, and a test that passes because its subject is empty is
+the version of that which looks healthiest from the outside. Both window guards
+now assert the tab-stop **count** before asserting the names, which is what stops
+it coming back.
+
+The padding is asserted rather than eyeballed, because a margin is exactly the
+kind of thing that silently returns to zero when somebody rebuilds a layout. Not
+as a pixel baseline — §11 is clear those are an artefact of one machine — but as
+the thing that was actually wrong: no docked region may have a zero margin,
+except the editor, which is the fill child and is bounded by its neighbours.
+
+### 13.6 What is not covered
+
+**No screen reader has been run against this.** Every measurement is of Avalonia's
+automation tree, which is what a platform bridge reads; it is not Orca or NVDA
+reading it aloud. Being in the control view is necessary and is not the same as
+verified end to end.
+
+~~**The LunaP controls in these windows are still only as good as 0.3.0.**~~ —
+**resolved.** The bump happened; §13.7 records what it changed here, which is
+less than it changed in EmuSen and for a reason worth knowing.
+
+**`ToolTip` is still unused**, and no control here has an explicit `TabIndex`.
+Tab order follows the visual tree and reads correctly in both windows, so there
+was nothing to reorder; it is recorded because a reader will want to know it was
+checked rather than forgotten.
+
+### 13.7 The 0.5.0 bump, and why it bought this repository almost nothing
+
+One line in the `fsproj`, 0.3.0 → 0.5.0, skipping 0.4.0. **160 tests green on the first run, and not one accessibility assertion changed.** Both window guards assert an exact tab-stop count — 16 in the main window, 4 in sign-in — and both counts, and every name behind them, are identical on the two versions.
+
+That is worth recording precisely because it is the opposite of what happened next door. EmuSen took the same bump and **twenty-six controls became reachable to a screen reader with no application change at all**, 69 of 97 named to 95 of 97 (`EmuSen_LunaP.md` §7.1). The same toolkit release, the same kind of measurement, and effectively zero here.
+
+**The reason is what each repository uses LunaP for, and it is not a criticism of either.** Counting what Pegasus actually instantiates:
+
+    9  Ui.Button      6  Ui.Hint    5  Ui.Stack   5  Ui.Row
+    4  ToolWindow     2  Ui.Header  1  Ui.Dock
+
+Every one of those is a window base class, a layout panel, or a `TextBlock` subclass. **Pegasus takes LunaP for window scaffolding, theming and layout, and builds its actual controls from raw Avalonia.** Nothing in these two windows is a `MeterList`, a `PathPickerRow`, a `FieldRow`, a `ConsolePane` or a `LunaSwitch` — which is the entire list of what §24 gave automation peers to. EmuSen's `DebugSettingsWindow` gained fifteen names in one go because fifteen of its sixteen tab stops are `LunaSwitch`es; Pegasus does not own a single one.
+
+**The general form is worth keeping: the value of a fix in shared chrome scales with how much of the chrome you actually took.** A consumer that uses a toolkit for its window class and its palette gets a light column and a base class out of a bump, and nothing else, because there is nothing else of the toolkit's on screen to improve. That is a correct outcome rather than a disappointing one — and it is the reason the accessibility work here had to be done by hand in §13.2 while EmuSen's largest single win arrived for free.
+
+**What the bump did buy: a deleted file.** `Access.fs` existed because this repository was on 0.3.0 and LunaP's `.AccessibleName(…)`, `.HelpText(…)` and `.LiveRegion(…)` arrived in 0.5.0. Its own header said it should forward to them or go away once the bump happened, and it has gone away — the three windows call LunaP's extensions directly now.
+
+Deleting it was a choice rather than a necessity, and the check that made it a choice is worth stating: **F# resolves C# extension methods**, so `TextBox(…).AccessibleName("Handle")` compiles here exactly as it does in EmuSen. Keeping the F# pipeline form would have been defensible on ergonomics. What decided it is §9's rule about one vocabulary — the fluent surface names things after the XAML attributes they set so that code and markup stay one language, and a repository saying `Access.named` while the toolkit, its documentation and the other consumer all say `.AccessibleName` is a second vocabulary for one idea. The same argument that replaced EmuSen's hand-rolled path row (`EmuSen_LunaP.md` §7.2), applied to something much smaller.
+
+Three lines needed parenthesising on the way — `Ui.Hint "" |> Access.live` became `(Ui.Hint "").LiveRegion()`, because without the parentheses F# reads the member access as binding to the string argument rather than to the result. The compiler caught all three; it is noted only because it is the one way this conversion can go quietly wrong in F# and not in C#.

@@ -39,14 +39,28 @@ type BuddyList(pad: Notepad, joinCode: unit -> string, book: ServerBook) as this
 
     let stretch = HorizontalAlignment.Stretch
 
-    let host = TextBox(PlaceholderText = "server", HorizontalAlignment = stretch)
-    let port = TextBox(PlaceholderText = "server port", Width = 80.0, HorizontalAlignment = HorizontalAlignment.Left)
+    let host =
+        TextBox(PlaceholderText = "server", HorizontalAlignment = stretch)
+            .AccessibleName("Server address")
+
+    let port =
+        TextBox(PlaceholderText = "server port", Width = 80.0, HorizontalAlignment = HorizontalAlignment.Left)
+            .AccessibleName("Server port")
 
     let passphrase =
         TextBox(PlaceholderText = "server passphrase", PasswordChar = '*', HorizontalAlignment = stretch)
+            .AccessibleName("Server passphrase")
+            // The distinction the whole panel turns on, and the hint that carries it
+            // is at the bottom where a reader arrives last. Said here too.
+            .HelpText("Gets you on to the server. It is not the join code, and it does not unseal any notes.")
 
-    let roster = ListBox(MinWidth = 180.0, MinHeight = 140.0)
-    let message = Ui.Hint ""
+    let roster =
+        ListBox(MinWidth = 180.0, MinHeight = 140.0)
+            .AccessibleName("Buddies on this server")
+
+    /// Carries both failures and progress, and neither is any use to somebody
+    /// who cannot see the colour change -- so it announces itself.
+    let message = (Ui.Hint "").LiveRegion()
 
     let fail (why: string) =
         message.Text <- why
@@ -126,14 +140,17 @@ type BuddyList(pad: Notepad, joinCode: unit -> string, book: ServerBook) as this
             host.Text <- server.Host
             port.Text <- string server.Port)
 
+        // 10 between rows rather than 8, and the address/port/passphrase group
+        // kept together at 6 so it reads as one thing to fill in rather than
+        // three unrelated boxes. Shell owns the margin between this panel and
+        // the editor beside it, because that is a relationship between the two
+        // and belongs where they are put next to each other.
         this.Content <-
             Ui.Stack(
-                8.0,
+                10.0,
                 Ui.Header "Buddies",
-                host,
-                port,
-                passphrase,
-                Ui.Row(6.0, Ui.Button("Sign in", (fun () -> signIn ())), Ui.Button("Sign out", (fun () -> pad.Disconnect()))),
+                Ui.Stack(6.0, host, port, passphrase),
+                Ui.Row(8.0, Ui.Button("Sign in", (fun () -> signIn ())), Ui.Button("Sign out", (fun () -> pad.Disconnect()))),
                 roster,
                 Ui.Button("Open note", (fun () -> openWith ())),
                 message,

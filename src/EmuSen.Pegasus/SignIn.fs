@@ -31,10 +31,29 @@ type SignInWindow(root: string) as this =
     let signedIn = Event<Identity>()
 
     let left = HorizontalAlignment.Left
-    let handle = TextBox(PlaceholderText = "handle", Width = 260.0, HorizontalAlignment = left)
-    let password = TextBox(PlaceholderText = "password", Width = 260.0, PasswordChar = '*', HorizontalAlignment = left)
-    let message = Ui.Hint ""
-    let known = ListBox(MaxHeight = 130.0, Width = 260.0, HorizontalAlignment = left)
+
+    let handle =
+        TextBox(PlaceholderText = "handle", Width = 260.0, HorizontalAlignment = left)
+            .AccessibleName("Handle")
+
+    let password =
+        TextBox(PlaceholderText = "password", Width = 260.0, PasswordChar = '*', HorizontalAlignment = left)
+            .AccessibleName("Password")
+            // Said out loud because the window says it out loud. The hint at the
+            // bottom exists precisely because this box does not mean what a password
+            // box usually means, and a user who cannot see that hint is exactly the
+            // user most likely to assume the usual thing.
+            .HelpText("Unlocks a key kept on this machine. It is never sent anywhere.")
+
+    /// Failures and progress both land here, and a user who cannot see it turn
+    /// red needs to be told it changed at all -- so it announces itself.
+    let message = (Ui.Hint "").LiveRegion()
+
+    let known =
+        ListBox(MaxHeight = 130.0, Width = 260.0, HorizontalAlignment = left)
+            // The rows announce as the handles they are; without this the list they
+            // sit in is a list of nothing in particular.
+            .AccessibleName("Identities on this machine")
 
     /// Fills the list of identities already on this machine, and hides it
     /// entirely when there are none -- on a first run the list would otherwise
@@ -71,8 +90,13 @@ type SignInWindow(root: string) as this =
 
     do
         this.Title <- "Pegasus — sign in"
-        this.Width <- 420.0
-        this.Height <- 330.0
+        // Grown with the padding rather than letting the padding eat the
+        // content: at 420x330 the hint at the bottom was already close, and
+        // 24 of margin plus the wider gaps would have clipped it. ToolWindow
+        // remembers geometry per WindowKey, so this is the size of a first run
+        // and not an override of anybody's saved one.
+        this.Width <- 460.0
+        this.Height <- 400.0
         this.WindowKey <- "pegasus-signin"
 
         known.SelectionChanged.Add(fun _ ->
@@ -105,13 +129,16 @@ type SignInWindow(root: string) as this =
                 )
             )
 
+        // The two boxes are one thing to fill in, so they sit closer to each
+        // other (6) than to the list above or the buttons below (14). Spacing
+        // that is uniform everywhere makes a form read as an undifferentiated
+        // column; this is the cheapest way to say which parts belong together.
         this.Content <-
             Ui.Stack(
-                10.0,
+                14.0,
                 Ui.Header "Who are you?",
                 known,
-                handle,
-                password,
+                Ui.Stack(6.0, handle, password),
                 buttons,
                 message,
                 Ui.Hint("Your handle is how your peer sees you. The password unlocks a key kept on this machine and is never sent anywhere.")
@@ -119,6 +146,6 @@ type SignInWindow(root: string) as this =
                     .Width(320.0)
                     .Left()
             )
-                .Margin(20.0)
+                .Margin(24.0)
 
     member _.SignedIn = signedIn.Publish
