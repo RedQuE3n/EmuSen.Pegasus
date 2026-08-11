@@ -45,7 +45,7 @@
          0.4.0 is messaging: a saved buddy list, a chat window per
          correspondent, transcripts on disk, and post that waits at a relay
          sealed to a key the relay does not hold. The two numbers agreeing with
-         the core's 0.4.0 is a coincidence again -- the core moved because the
+         the core's 0.4.0 is a coincidence again: the core moved because the
          protocol did, and this moved because the window did. What has to agree
          between two installations is the protocol number in Hello, not the
          version on the download, and this release cannot talk to a 0.3.0 one.
