@@ -1076,6 +1076,8 @@ Two measurements, both taken rather than remembered. A local `linux-x64` self-co
 
 **`v0.2.0` was tagged, built three platforms, published nothing, and did not fail.** It is recorded here rather than quietly retagged because the failure mode is the interesting part and somebody will meet it again.
 
+**The tag itself no longer exists** — it was deleted once 0.3.0 had shipped, so the release list does not carry a version that published nothing. That makes this section the only remaining record of it, which is the reason the run is described here in enough detail to be useful without it: nothing was ever distributed under `v0.2.0`, so deleting it took nothing back from anybody.
+
 The matrix above asked for `macos-13` for the `osx-x64` build. **That image was retired on 4 December 2025.** The observed run — `test` green, `linux-x64` green, `win-x64` green, `osx-arm64` green, `osx-x64` **queued**, indefinitely — is what a retired label looks like from the outside. The replacement is `macos-15-intel`, and the matrix now names it.
 
 Three things in that are worth keeping.
