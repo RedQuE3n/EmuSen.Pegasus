@@ -1038,3 +1038,36 @@ A relicence is not a recall, and nothing is being unlisted. The README's older c
 `YDotNet.Native.Linux` ships `runtimes/linux-*/native/libyrs.so` — the Yrs CRDT compiled from Rust — and the macOS and Win32 packages ship the equivalent. All three declare MIT in their nuspecs and **none of them ships a licence file of any kind**. The packages point at <https://github.com/y-crdt/ydotnet> at a pinned commit, so the provenance is traceable, but the compiled artefact travels into every Pegasus binary with no notice beside it.
 
 This is recorded as a hazard rather than a defect, and it is not ours to fix: it is the packagers' declaration to make, and it was equally true while this repository was GPL. It is noted because it is precisely the question a reader auditing an MIT claim should ask — *what is actually inside the binaries* — and because LunaP's §25.4 records the same shape of finding about the Inter typeface embedded in `Avalonia.Fonts.Inter`. Two dependencies, both declaring a permissive licence over a compiled third-party artefact they ship without its notice. Worth knowing that the pattern is common rather than a one-off.
+
+## 15. The release became a workflow
+
+`v0.1.0` was built by hand: four `dotnet publish` runs on one Linux laptop, four staging directories assembled beside them, `sha256sum` over the result, and `gh release create` typed at the end. It worked, and it left nothing behind. **No script in this repository produced those binaries and no file records the flags they were built with.** What the archives prove is that somebody ran a command once. §14 then relicensed the work and made a second release necessary, which is what turned a tolerable gap into the thing that had to be fixed first — a release cut by hand a second time would have been a second unrepeatable event, and the difference between the two would have been unauditable in exactly the way a licence change must not be.
+
+`.github/workflows/release.yml` takes the `v*` tag namespace §7.1 reserved for the application before there was an application release to put in it. `core-v0.3.0` does not match `v*` — it does not start with a `v` — so the two publishing workflows in this repository cannot fire on each other's tags.
+
+### 15.1 What building on the target OS buys, and what it does not
+
+This is the part worth stating precisely, because it is easy to overclaim and the release notes are what a reader trusts.
+
+v0.1.0's macOS and Windows binaries were **cross-compiled on Linux and had never been run**, and both the release notes and `Pegasus_Setup.md` §11 said so. The matrix changes the first half of that sentence and not the second. Each RID is now built by the operating system it targets — `macos-13` for `osx-x64`, `macos-14` for `osx-arm64`, `windows-latest` for `win-x64` — so "built on a Mac" is now true where only "built for a Mac from Linux" was available before.
+
+**Nobody has still started them.** Pegasus is a GUI, a runner has no display, and there is no `--help` path to exercise instead; the program's only entry point opens a window. So the caveat stays on the page, narrowed rather than removed, and any release note claiming these were tested would be inventing a result. Chariot's identical workflow in its own repository *can* smoke-test, because a daemon has a `--help` that parses arguments and exits — that asymmetry is real and is recorded there rather than borrowed here.
+
+The runner images are pinned by number rather than `macos-latest` for a reason with a history: `latest` already moved from Intel to Apple Silicon once. The day it moves again is the day `osx-x64` silently goes back to being cross-compiled with nobody editing this file, which is the exact failure this matrix exists to prevent.
+
+`fail-fast: true` is deliberate. A release missing one platform is worse than no release, because `SHA256SUMS` would be internally consistent over what it lists and silent about what never built.
+
+### 15.2 The version comes from the tag
+
+The same discipline `publish-core.yml` states for the package, for the same reason: a version written in two places will eventually disagree with itself. The tag's `v` is stripped and passed as `-p:Version`, so the tag decides what the binaries report and what the archives are called. The `<Version>` in `EmuSen.Pegasus.fsproj` is the default for a local `dotnet publish` and is kept in step.
+
+The archive layout is v0.1.0's, unchanged on purpose: a single top-level `Pegasus-<rid>` directory so an extract never scatters files into the caller's, and `LICENSE` and `README.md` beside the binary in every archive. `Pegasus_Setup.md` §2.1 documents those paths and a reader following it must not find something else. The macOS `.app` bundle is constructed in the workflow — `Contents/MacOS`, `Contents/Info.plist`, bundle id `io.github.redque3n.pegasus`, and **no `CFBundleIconFile`**, because nothing in this repository has ever had an icon and a key pointing at a file that is not there is worse than an absent key.
+
+Two measurements, both taken rather than remembered. A local `linux-x64` self-contained single-file publish at 0.2.0 is **105,900,038 bytes**; v0.1.0's `linux-x64` download was **44,916,243 bytes** compressed, which is where the release notes' "a 100 MB program arrives as a 45 MB download" comes from. The suite is **160 tests, all passing**, and it gates the matrix rather than running inside it — it is headless and platform-independent, so four runs would buy nothing and would turn one red test into four.
+
+### 15.3 What is still not covered
+
+- **Nothing is signed or notarised.** Signing needs a paid certificate from Apple or a code-signing CA and there is not one, so every platform warns once and `SHA256SUMS` is the only integrity evidence a download has. That file is now generated on the runner over the artefacts about to be uploaded, rather than on a laptop over files about to be uploaded from somewhere else — a smaller gap than it was, and not a closed one.
+- **The GUI is never launched by the release**, per §15.1.
+- **No `linux-arm64` build**, so a Raspberry Pi still cannot run a released Chariot or Pegasus. Building from source on the machine is one `dotnet publish` and `Pegasus_Setup.md` §11 says so.
+- **The release notes are prose in the repository** at `docs/Releases/<tag>.md`, so they are reviewed with the change they describe. A tag with no notes file falls back to generated notes rather than failing: the binaries are the thing being shipped and a missing paragraph must not block them.

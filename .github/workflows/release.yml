@@ -1,0 +1,224 @@
+# Build the desktop application for every released platform and publish it as a
+# GitHub release when an application version tag is pushed.
+#
+#     git tag v0.2.0 && git push origin v0.2.0
+#
+# `v*` RATHER THAN `core-v*`, and the two do not collide: publish-core.yml
+# watches `core-v*`, this watches `v*`, and a tag named `core-v0.3.0` does not
+# match `v*` because it does not start with a `v`. §7.1 reserved this namespace
+# for the application before there was an application release to put in it.
+#
+# THE VERSION COMES FROM THE TAG. The `v` is stripped and passed as -p:Version,
+# so the tag decides what the binaries call themselves and what the archives are
+# named. The <Version> in the .fsproj is the default for a local publish and is
+# kept in step; a version written in two places is one that will eventually
+# disagree with itself, which is the trap publish-core.yml's header records.
+#
+# WHY A MATRIX ON NATIVE RUNNERS, and this is the whole reason this file exists
+# rather than a person running four publishes on their laptop: v0.1.0's binaries
+# were all cross-compiled on Linux, and its release notes and Pegasus_Setup.md
+# §11 both had to say so. Each RID is now built by the operating system it runs
+# on. That does NOT mean anybody started them - a GUI cannot be launched on a
+# runner with no display, and the notes still say that - but "built on a Mac"
+# and "built for a Mac from Linux" are different claims and only one of them was
+# available before. See docs/Pegasus_Design.md §15.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  # Tested before published, the same rule publish-core.yml states: a binary
+  # that was never run is a binary whose first user is running it for you. This
+  # gates the matrix rather than running inside it - the suite is headless and
+  # platform-independent, so running it four times would buy nothing and would
+  # turn one red test into four confusing ones.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet test
+
+  build:
+    needs: test
+    strategy:
+      # One platform failing must not publish a release missing that platform.
+      # A half-populated release is worse than none: the SHA256SUMS file would
+      # be complete for what it lists and silently omit what never built.
+      fail-fast: true
+      matrix:
+        include:
+          - rid: linux-x64
+            os: ubuntu-latest
+          # macos-13 is the last Intel image and macos-14 is Apple Silicon.
+          # These are pinned by number rather than macos-latest on purpose:
+          # `latest` moved to arm64 once already, and the day it moves again is
+          # the day osx-x64 quietly starts being cross-compiled without anybody
+          # editing this file - which is exactly the thing this matrix exists to
+          # stop.
+          - rid: osx-x64
+            os: macos-13
+          - rid: osx-arm64
+            os: macos-14
+          - rid: win-x64
+            os: windows-latest
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Self-contained and single-file: the .NET runtime, Avalonia, SQLite and
+      # the Yrs CRDT native all sit inside one executable, which is why a 100 MB
+      # program arrives as a ~45 MB download. IncludeNativeLibrariesForSelfExtract
+      # is what pulls libyrs and e_sqlite3 in; without it the program builds,
+      # ships, and dies at the first note it tries to open.
+      - name: Publish ${{ matrix.rid }}
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "building $VERSION for ${{ matrix.rid }}"
+          dotnet publish src/EmuSen.Pegasus/EmuSen.Pegasus.fsproj \
+            -c Release -r ${{ matrix.rid }} --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true \
+            -p:Version="$VERSION" \
+            -o publish
+
+      # The archive layout is v0.1.0's, deliberately unchanged: a single top
+      # level directory named Pegasus-<rid> so an extract never scatters files
+      # into the current one, and LICENSE and README.md beside the binary in
+      # every archive. Pegasus_Setup.md §2.1 documents these paths and a reader
+      # following it must not find something else.
+      #
+      # Only the executable is staged. `dotnet publish` also leaves .pdb files
+      # next to it and they are debug symbols, not part of the program.
+      - name: Stage the archive
+        shell: bash
+        run: |
+          STAGE="Pegasus-${{ matrix.rid }}"
+          mkdir -p "$STAGE"
+
+          case "${{ matrix.rid }}" in
+            osx-*)
+              # A real .app bundle, so Finder and the Dock treat it like an
+              # application rather than a unix executable that happens to open a
+              # window. Chariot gets no bundle because it is a daemon with no
+              # window - the asymmetry is intentional and Pegasus_Setup.md §2.1
+              # states it.
+              #
+              # There is NO ICON, because nothing in this repository has ever had
+              # one, so CFBundleIconFile is absent rather than pointing at a file
+              # that is not there. macOS shows the generic application icon.
+              APP="$STAGE/EmuSen.Pegasus.app"
+              mkdir -p "$APP/Contents/MacOS"
+              cp publish/EmuSen.Pegasus "$APP/Contents/MacOS/EmuSen.Pegasus"
+              chmod +x "$APP/Contents/MacOS/EmuSen.Pegasus"
+              VERSION="${GITHUB_REF_NAME#v}"
+              cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>Pegasus</string>
+            <key>CFBundleDisplayName</key><string>Pegasus</string>
+            <key>CFBundleIdentifier</key><string>io.github.redque3n.pegasus</string>
+            <key>CFBundleExecutable</key><string>EmuSen.Pegasus</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+            <key>CFBundleVersion</key><string>${VERSION}</string>
+            <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+            <key>LSMinimumSystemVersion</key><string>12.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+              ;;
+            win-x64)
+              cp publish/EmuSen.Pegasus.exe "$STAGE/EmuSen.Pegasus.exe"
+              ;;
+            *)
+              cp publish/EmuSen.Pegasus "$STAGE/EmuSen.Pegasus"
+              chmod +x "$STAGE/EmuSen.Pegasus"
+              ;;
+          esac
+
+          cp LICENSE README.md "$STAGE/"
+
+      # tar.gz for the unix platforms and zip for Windows, matching v0.1.0 and
+      # matching what each platform can open without installing anything.
+      - name: Archive
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGE="Pegasus-${{ matrix.rid }}"
+          if [ "${{ matrix.rid }}" = "win-x64" ]; then
+            # Windows runners ship 7z; PowerShell's Compress-Archive would also
+            # work but mangles the executable bit, which does not matter here and
+            # would the moment this list grows a unix platform packed as a zip.
+            7z a -tzip "Pegasus-$VERSION-win-x64.zip" "$STAGE" >/dev/null
+          else
+            tar czf "Pegasus-$VERSION-${{ matrix.rid }}.tar.gz" "$STAGE"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pegasus-${{ matrix.rid }}
+          path: |
+            *.tar.gz
+            *.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    permissions:
+      # gh release create writes to this repository. Nothing else here does.
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # SHA256SUMS is the only integrity evidence these downloads have, because
+      # nothing is signed - signing needs a paid certificate from Apple or a
+      # code-signing CA and there is not one. Generated here, over the artifacts
+      # that are about to be uploaded, rather than on a laptop over files that
+      # were about to be uploaded from somewhere else.
+      - name: Checksum
+        working-directory: dist
+        run: |
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      # The notes are prose and prose belongs in the repository, where it is
+      # reviewed with the change it describes rather than typed into a web form
+      # at the moment of release. A version with no notes file falls back to
+      # generated ones rather than failing the release - the binaries are the
+      # thing being shipped and a missing paragraph must not block them.
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          NOTES="docs/Releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$NOTES" ]; then
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "Pegasus $VERSION" --notes-file "$NOTES"
+          else
+            echo "no $NOTES - falling back to generated notes"
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "Pegasus $VERSION" --generate-notes
+          fi

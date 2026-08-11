@@ -23,15 +23,20 @@
     <!-- The APPLICATION's version, and it is deliberately not the core's. This
          repository holds two things that are released separately: the core is a
          package on `core-v*` tags and is already at 0.3.0, while this is the
-         desktop program and starts at 0.1.0 on a `v*` tag. §7.1 predicted this
+         desktop program and started at 0.1.0 on a `v*` tag. §7.1 predicted this
          collision and reserved the namespace for it before there was anything
          to put in it, which is why the first application release needed no tag
          scheme invented under time pressure.
 
          The two numbers will drift apart and that is correct: a protocol change
          forces the core's version, a change to the window forces this one, and
-         tying them would make every frame edit look like a new notepad. -->
-    <Version>0.1.0</Version>
+         tying them would make every frame edit look like a new notepad.
+
+         Like the core's, THE RELEASED VERSION COMES FROM THE TAG: release.yml
+         strips the `v` and passes -p:Version, so a `v*` tag decides what the
+         binaries call themselves. This number is the default for a local
+         `dotnet publish` and is kept in step so the two never disagree - §15. -->
+    <Version>0.2.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
