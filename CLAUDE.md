@@ -148,7 +148,11 @@ Commit, push and merge only when asked.
   clone builds with `dotnet build` and nothing else. `Design §7.1` records why
   it is a package rather than a submodule or a vendored copy, and why Galaxia
   and Cauldron are no longer carried alongside it.
-- GPL-3.0-or-later, a consequence of linking LunaP (`Design §7.1`).
+- MIT, and a choice rather than a consequence for the first time — LunaP's
+  relicence removed the copyleft term this repository used to inherit, and an
+  audit found nothing else imposing one (`Design §14`). Every dependency is
+  MIT, Apache-2.0 or BSD-3-Clause; a new `PackageReference` is where that
+  would change.
 - `Microsoft.Data.Sqlite` **must** be accompanied by an explicit
   `SQLitePCLRaw.bundle_e_sqlite3` 3.0.5 pin. Alone it resolves a transitive
   2.1.11 with a high-severity advisory. `Identity §3.2` records it; EmuSen pins

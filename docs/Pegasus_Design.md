@@ -380,7 +380,7 @@ other projects consume it. Four ways to cross that boundary were considered:
   silently dropped `UseX11` on Wayland.
 - **Publish LunaP as a NuGet package.** Adopted.
 
-`EmuSen.LunaP` is at **0.5.0**, restored from nuget.org like any other package.
+`EmuSen.LunaP` is at **0.6.0**, restored from nuget.org like any other package.
 It is the only package of the toolkit's this repository takes at all — a
 correction twice over: it used to be three, and they used to be hand-carried.
 
@@ -1000,3 +1000,41 @@ Every one of those is a window base class, a layout panel, or a `TextBlock` subc
 Deleting it was a choice rather than a necessity, and the check that made it a choice is worth stating: **F# resolves C# extension methods**, so `TextBox(…).AccessibleName("Handle")` compiles here exactly as it does in EmuSen. Keeping the F# pipeline form would have been defensible on ergonomics. What decided it is §9's rule about one vocabulary — the fluent surface names things after the XAML attributes they set so that code and markup stay one language, and a repository saying `Access.named` while the toolkit, its documentation and the other consumer all say `.AccessibleName` is a second vocabulary for one idea. The same argument that replaced EmuSen's hand-rolled path row (`EmuSen_LunaP.md` §7.2), applied to something much smaller.
 
 Three lines needed parenthesising on the way — `Ui.Hint "" |> Access.live` became `(Ui.Hint "").LiveRegion()`, because without the parentheses F# reads the member access as binding to the string argument rather than to the result. The compiler caught all three; it is noted only because it is the one way this conversion can go quietly wrong in F# and not in C#.
+
+---
+
+## 14. The relicence, and a term that was inherited twice
+
+This repository is **MIT**, and this is the first time its licence has been a choice.
+
+§7's account of the package boundary ends with a paragraph naming the consequence: *"EmuSen is GPL-3.0, so the packages are GPL-3.0, so Pegasus is a derivative work of them. This repository's licence is therefore not a free choice while §8 holds."* That was true and correctly reasoned when it was written. It is no longer true, and not because §8 stopped holding — Pegasus still builds its window, its theme and its bootstrap on LunaP, exactly as §8 describes. It stopped being true because **LunaP relicensed to MIT**, on the finding that its own GPL was inherited from EmuSen rather than chosen, and that nothing in its dependency tree required it. `docs/LunaP.md` §25 in that repository is the account.
+
+So the term arrived here by inheritance twice over: EmuSen chose it, LunaP carried it out of EmuSen without re-deciding it, and this repository took it from LunaP as a consequence it correctly identified as not a choice. Three projects, one decision, made once by the only one of them that is an emulator.
+
+### 14.1 The audit
+
+Removing the LunaP constraint does not by itself make MIT available — it only removes the one term everybody already knew about. Everything else linked here had to be checked, read out of each package's own `<license>` expression in its `.nuspec` rather than from memory:
+
+| Licence | Packages |
+|---|---|
+| MIT | `FSharp.Core`, `YDotNet`, `YDotNet.Native.Linux`, `YDotNet.Native.MacOS`, `YDotNet.Native.Win32`, `Microsoft.Data.Sqlite`, `Microsoft.NET.Test.Sdk`, `Avalonia.Headless`, `EmuSen.LunaP` |
+| Apache-2.0 | `SQLitePCLRaw.bundle_e_sqlite3`, `SQLitePCLRaw.core`, `xunit`, `xunit.runner.visualstudio` |
+| BSD-3-Clause | `FsCheck`, `FsCheck.Xunit` |
+
+**No copyleft anywhere in the tree**, and the four Apache-2.0 and two BSD-3-Clause entries are all test-only except the SQLitePCLRaw pair, which are permissive and impose notice terms rather than reciprocal ones. Ownership is equally simple: 26 commits, one author.
+
+The `FSharp.Core` line is worth pausing on, because §7 records it as the objection that sank EmuSen's `F#ascent` branch and settles it structurally by moving to a separate repository. It is MIT, and was never a licence problem — it was an assembly-boundary problem. Two different objections that would have been easy to conflate.
+
+### 14.2 What stays GPL
+
+`v0.1.0` was released as compiled binaries under GPL-3.0-or-later, and `EmuSen.Pegasus.Core` `0.2.0`, `0.2.1` and `0.2.2` are on nuget.org under it. **All of them stay.** nuget.org cannot edit a published package's metadata — a version may be unlisted but not altered — and a grant already made to somebody who took the work is not withdrawn by a later, looser one. Source for the `v0.1.0` binaries remains this repository at that tag.
+
+A relicence is not a recall, and nothing is being unlisted. The README's older correction about the `LICENSE` file having been missing until that first binary release is kept for the same reason: it is a record of the repository having declared a licence in prose without shipping the text of one, and MIT does not make that less worth remembering.
+
+`EmuSen.Pegasus.Core` goes to **0.3.0** to carry the change. The protocol is untouched at 4 — a 0.2.x peer and a 0.3.0 peer interoperate exactly as before — and the bump exists only because a licence is the one thing a consumer most needs a version number to signal and there is no other mechanism for signalling it. That is the same reasoning LunaP applied at its own 0.6.0.
+
+### 14.3 A hazard the table does not reach
+
+`YDotNet.Native.Linux` ships `runtimes/linux-*/native/libyrs.so` — the Yrs CRDT compiled from Rust — and the macOS and Win32 packages ship the equivalent. All three declare MIT in their nuspecs and **none of them ships a licence file of any kind**. The packages point at <https://github.com/y-crdt/ydotnet> at a pinned commit, so the provenance is traceable, but the compiled artefact travels into every Pegasus binary with no notice beside it.
+
+This is recorded as a hazard rather than a defect, and it is not ours to fix: it is the packagers' declaration to make, and it was equally true while this repository was GPL. It is noted because it is precisely the question a reader auditing an MIT claim should ask — *what is actually inside the binaries* — and because LunaP's §25.4 records the same shape of finding about the Inter typeface embedded in `Avalonia.Fonts.Inter`. Two dependencies, both declaring a permissive licence over a compiled third-party artefact they ship without its notice. Worth knowing that the pattern is common rather than a one-off.

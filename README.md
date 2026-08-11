@@ -186,13 +186,26 @@ disconnects" — turned out to be wrong for a reason worth reading:
 
 ## Licence
 
-GPL-3.0-or-later. Pegasus links `EmuSen.LunaP`, which is GPL-3.0, so this is a
-consequence rather than a choice; `docs/Pegasus_Design.md` §7.1 records it.
+MIT.
 
-The `LICENSE` file carrying the full text arrived with the first binary release,
-and it had been missing until then. That is worth stating plainly rather than
-quietly correcting: the repository declared a licence in prose for its whole life
-without shipping the text of one. GPL-3.0 §4 and §5 require the licence to be
-conveyed *with* the work, and a release page offering compiled executables
-conveys the work to people who will never open this repository. Source for those
-binaries is this repository at the `v0.1.0` tag.
+**It used to be GPL-3.0-or-later, and it used to say so as a consequence rather
+than a choice** — Pegasus links `EmuSen.LunaP`, LunaP was GPL-3.0, and a
+derivative work of it had no other option. LunaP has relicensed to MIT, so the
+consequence has gone and what is left is a choice, made here for the first time.
+`docs/Pegasus_Design.md` §14 records it, including the dependency audit that
+shows nothing else was imposing a copyleft term either.
+
+What that changes for the release binaries: `v0.1.0` was released under
+GPL-3.0-or-later and stays so, as do `core-v0.2.0` through `core-v0.2.2` on
+nuget.org. A grant already made is not withdrawn by a later one, and nuget.org
+cannot edit a published package's metadata. Source for the GPL binaries remains
+this repository at the `v0.1.0` tag.
+
+**One older correction is kept, because it is still the useful part.** The
+`LICENSE` file carrying the full text arrived with that first binary release,
+and it had been missing until then: the repository declared a licence in prose
+for its whole life without shipping the text of one. GPL-3.0 §4 and §5 required
+the licence to be conveyed *with* the work, and a release page offering compiled
+executables conveys the work to people who will never open this repository. MIT
+asks the same thing in one sentence instead of two sections, and the file is
+there now either way.

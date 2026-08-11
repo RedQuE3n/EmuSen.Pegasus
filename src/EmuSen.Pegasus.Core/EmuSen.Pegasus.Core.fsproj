@@ -51,11 +51,21 @@
          attempts at the FSharp.Core pin below, and only the second one held;
          what went wrong in between is worth reading before touching that pin.
          Both earlier versions remain resolvable on nuget.org and both emit an
-         NU1605 downgrade at any consumer holding FSharp.Core 10.0.110. -->
-    <Version>0.2.2</Version>
+         NU1605 downgrade at any consumer holding FSharp.Core 10.0.110.
+
+         0.3.0 carries no protocol change either. It is the relicence to MIT
+         (§14), and it is a bump because a licence is the one thing a consumer
+         most needs a version to signal and there is no other mechanism for
+         signalling it. Protocol stays at 4: a 0.2.x peer and a 0.3.0 peer talk
+         to each other exactly as they did. -->
+    <Version>0.3.0</Version>
     <Authors>Tristan Pelland</Authors>
     <Description>Wire types, frame codec, sealed envelope and identity keys shared by Pegasus and Chariot.</Description>
-    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    <!-- MIT as of 0.3.0; 0.2.0-0.2.2 shipped GPL-3.0-or-later and stay that way
+         on nuget.org, which cannot edit a published package's metadata. The GPL
+         was never chosen here - it was inherited from LunaP, which has since
+         relicensed, and every dependency of this package is permissive. §14. -->
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/RedQuE3n/EmuSen.Pegasus</RepositoryUrl>
     <PackageTags>crdt;protocol;fsharp;pegasus</PackageTags>

@@ -49,4 +49,5 @@ Pegasus repository.
 
 ## Licence
 
-GPL-3.0-or-later.
+MIT, as of 0.3.0. Versions 0.2.0 through 0.2.2 were published GPL-3.0-or-later
+and stay that way on nuget.org — see `docs/Pegasus_Design.md` §14.
