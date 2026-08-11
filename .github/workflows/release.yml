@@ -1,7 +1,7 @@
 # Build the desktop application for every released platform and publish it as a
 # GitHub release when an application version tag is pushed.
 #
-#     git tag v0.2.0 && git push origin v0.2.0
+#     git tag v0.3.0 && git push origin v0.3.0
 #
 # `v*` RATHER THAN `core-v*`, and the two do not collide: publish-core.yml
 # watches `core-v*`, this watches `v*`, and a tag named `core-v0.3.0` does not
