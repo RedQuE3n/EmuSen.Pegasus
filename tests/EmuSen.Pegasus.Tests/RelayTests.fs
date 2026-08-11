@@ -36,9 +36,13 @@ type private Pair(?accepting: bool) =
     /// client with nothing to receive them.
     let accepting = defaultArg accepting true
 
+    /// One directory shared by both clients in the pair, which is what a real
+    /// relay is: a card published by one is the card the other is served.
+    let book = Peers.CardBook()
+
     let connect (identity: Identity) (document: DocumentActor) =
         let client =
-            RelayClient.connectAsync "127.0.0.1" relay.Port Passphrase identity Peers.acceptAny ct
+            RelayClient.connectAsync "127.0.0.1" relay.Port Passphrase identity Peers.acceptAny book.Accept book.KeyFor ct
             |> _.GetAwaiter().GetResult()
 
         if accepting then
@@ -183,12 +187,13 @@ let ``a server whose key changed is refused`` () =
     let root = tempIdentityRoot ()
     use alice = Peers.identity "alice"
     let trust = Controller.pinnedTrust root alice.Handle
+    let book = Peers.CardBook()
 
     use honest = new StubRelay(Passphrase, Identity.Generate(Handle.Parse "chariot"))
     honest.Open()
 
     let first =
-        RelayClient.connectAsync "127.0.0.1" honest.Port Passphrase alice trust ct
+        RelayClient.connectAsync "127.0.0.1" honest.Port Passphrase alice trust book.Accept book.KeyFor ct
         |> _.GetAwaiter().GetResult()
 
     Assert.Equal(Some "chariot", first.Server |> Option.map _.Handle.Value)
@@ -201,7 +206,7 @@ let ``a server whose key changed is refused`` () =
 
     let refused =
         Assert.Throws<ProtocolError>(fun () ->
-            RelayClient.connectAsync "127.0.0.1" impostor.Port Passphrase alice trust ct
+            RelayClient.connectAsync "127.0.0.1" impostor.Port Passphrase alice trust book.Accept book.KeyFor ct
             |> _.GetAwaiter().GetResult()
             |> ignore)
 
@@ -216,13 +221,14 @@ let ``the same server on a second connection is recognised rather than refused``
     let root = tempIdentityRoot ()
     use alice = Peers.identity "alice"
     let trust = Controller.pinnedTrust root alice.Handle
+    let book = Peers.CardBook()
 
     use relay = new StubRelay(Passphrase)
     relay.Open()
 
     for _ in 1..2 do
         let client =
-            RelayClient.connectAsync "127.0.0.1" relay.Port Passphrase alice trust ct
+            RelayClient.connectAsync "127.0.0.1" relay.Port Passphrase alice trust book.Accept book.KeyFor ct
             |> _.GetAwaiter().GetResult()
 
         Assert.True(client.Server.IsSome)

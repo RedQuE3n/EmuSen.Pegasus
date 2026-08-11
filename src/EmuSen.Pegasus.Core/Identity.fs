@@ -51,14 +51,46 @@ module Fingerprint =
 /// Disposable because ECDsa holds a native key handle. Dropping one without
 /// disposing leaves it to the finaliser rather than leaking outright, but the
 /// key material stays in memory longer than it needs to.
-type Identity private (handle: Handle, key: ECDsa) =
+type Identity private (handle: Handle, key: ECDsa, messaging: ECDiffieHellman) =
     // Exported once: it is asked for on every Peer read, and re-exporting per
     // call would hash the same bytes repeatedly for no reason.
     let publicKey = key.ExportSubjectPublicKeyInfo()
+    let messagingPublicKey = messaging.ExportSubjectPublicKeyInfo()
 
     member _.Handle = handle
     member _.PublicKey = publicKey
     member _.Fingerprint = Fingerprint.ofPublicKey publicKey
+
+    /// The second keypair, and it is a SEPARATE key rather than the signing one
+    /// used twice.
+    ///
+    /// Reusing `key` for agreement would have cost nothing to write -- P-256 is
+    /// P-256, and .NET will re-import the same private half as an
+    /// ECDiffieHellman quite happily -- and it was rejected. A key used for two
+    /// algorithms is outside what either algorithm's security argument covers,
+    /// the interactions are studied and unpleasant, and "no known attack against
+    /// this particular pairing" is not a sentence this project wants load-bearing
+    /// in it. Two keys cost one extra ECDH keypair per identity and one extra
+    /// sealed column in the store, and buy an argument that does not need a
+    /// caveat. Pegasus_Identity.md §10.
+    ///
+    /// The fingerprint and the caret colour stay derived from the SIGNING key
+    /// alone. They are what a person reads down a phone line, and changing what
+    /// they are computed from would silently invalidate every pin already on
+    /// every disk.
+    member _.MessagingPublicKey = messagingPublicKey
+
+    /// One Diffie-Hellman against this identity's messaging private half.
+    ///
+    /// Internal because a raw agreement is a footgun in general hands: the
+    /// caller decides the info tag, and two callers choosing the same tag for
+    /// different purposes is exactly the domain-separation failure Messaging.fs
+    /// takes trouble to avoid. Messaging is the only caller and owns the tags.
+    member internal _.AgreeMessaging(theirPublicKey: byte[], info: byte[]) =
+        use theirs = ECDiffieHellman.Create()
+        let mutable read = 0
+        theirs.ImportSubjectPublicKeyInfo(ReadOnlySpan theirPublicKey, &read)
+        messaging.DeriveKeyFromHash(theirs.PublicKey, HashAlgorithmName.SHA256, [||], info)
 
     /// What this identity looks like to the other peer.
     member this.Peer : PeerInfo =
@@ -84,20 +116,31 @@ type Identity private (handle: Handle, key: ECDsa) =
     /// carries a `public` line and a `kdf` line and assumes no curve.
     /// Pegasus_Identity.md §5 has the argument in full.
     static member Generate(handle: Handle) =
-        new Identity(handle, ECDsa.Create ECCurve.NamedCurves.nistP256)
+        new Identity(handle, ECDsa.Create ECCurve.NamedCurves.nistP256, ECDiffieHellman.Create ECCurve.NamedCurves.nistP256)
 
-    static member internal OfPrivateKey(handle: Handle, pkcs8: byte[]) =
+    static member internal OfPrivateKey(handle: Handle, pkcs8: byte[], messagingPkcs8: byte[]) =
         let key = ECDsa.Create()
         // The out parameter is how many bytes were consumed. We do not check it:
         // the array came from our own file and a short read would fail at the
         // first signature anyway.
         let mutable read = 0
         key.ImportPkcs8PrivateKey(ReadOnlySpan pkcs8, &read)
-        new Identity(handle, key)
+
+        let agreement = ECDiffieHellman.Create()
+        let mutable readAgreement = 0
+        agreement.ImportPkcs8PrivateKey(ReadOnlySpan messagingPkcs8, &readAgreement)
+        new Identity(handle, key, agreement)
 
     /// Internal, and visible to the test assembly only so the suite can assert
     /// these bytes never reach the file unsealed. Nothing else should want it.
     member internal _.ExportPrivateKey() = key.ExportPkcs8PrivateKey()
+
+    /// The messaging private half, for the store to seal and for the guard that
+    /// asserts it never reaches disk in the clear. Internal for the same reason
+    /// as above, and it matters MORE here rather than less: this is the key that
+    /// opens every message ever sent to this identity, including the ones
+    /// already sitting in a relay's mailbox.
+    member internal _.ExportMessagingPrivateKey() = messaging.ExportPkcs8PrivateKey()
 
     /// Verifies against a bare public key, with no private half anywhere. This
     /// is the shape the pinned-key handshake will need: you hold your peer's
@@ -109,4 +152,6 @@ type Identity private (handle: Handle, key: ECDsa) =
         key.VerifyData(data, signature, HashAlgorithmName.SHA256)
 
     interface IDisposable with
-        member _.Dispose() = key.Dispose()
+        member _.Dispose() =
+            key.Dispose()
+            messaging.Dispose()

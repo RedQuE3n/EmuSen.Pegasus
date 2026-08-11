@@ -73,7 +73,16 @@ module IdentityStore =
            Kdf = reader.GetString 1
            Iterations = reader.GetInt32 2
            Salt = reader.GetFieldValue<byte[]> 3
-           Secret = reader.GetFieldValue<byte[]> 4 |}
+           Secret = reader.GetFieldValue<byte[]> 4
+           // NULL for any identity created before messaging existed. Not an
+           // error and not a corrupt row -- it is what a store written by an
+           // older build looks like, and unlock mints the missing key rather
+           // than refusing to open an account somebody has been using.
+           MessagingSecret =
+            if reader.IsDBNull 5 then
+                None
+            else
+                Some(reader.GetFieldValue<byte[]> 5) |}
 
     /// Display handles of every identity on this machine, for the sign-in
     /// window to offer. Ordered by the folded handle so the list is stable.
@@ -123,16 +132,28 @@ module IdentityStore =
                 let pkcs8 = identity.ExportPrivateKey()
                 let secret = Crypto.seal key pkcs8
 
-                // It cannot be un-exported, but it can stop sitting in a heap
-                // block waiting for the collector.
+                // Sealed under the SAME derived key as the signing half, and
+                // that is the point rather than a shortcut: one password opens
+                // an identity, so a person cannot end up with a signing key they
+                // can use and a messaging key they cannot. Two passwords would
+                // mean an account that can prove who it is and cannot read its
+                // own post, which is not a state worth being able to reach.
+                let messagingPkcs8 = identity.ExportMessagingPrivateKey()
+                let messagingSecret = Crypto.seal key messagingPkcs8
+
+                // Neither can be un-exported, but both can stop sitting in a
+                // heap block waiting for the collector.
                 CryptographicOperations.ZeroMemory(Span pkcs8)
+                CryptographicOperations.ZeroMemory(Span messagingPkcs8)
 
                 use db = Db.openAt (databaseIn root)
 
                 Db.executeWith
                     db
-                    "INSERT INTO identities (handle, display, created, public_key, kdf, iterations, salt, secret)
-                     VALUES ($handle, $display, $created, $public, $kdf, $iterations, $salt, $secret)"
+                    "INSERT INTO identities (handle, display, created, public_key, kdf, iterations, salt, secret,
+                                             message_public, message_secret)
+                     VALUES ($handle, $display, $created, $public, $kdf, $iterations, $salt, $secret,
+                             $messagePublic, $messageSecret)"
                     [ "$handle", box handle.Folded
                       "$display", box handle.Value
                       "$created", box (DateTime.UtcNow.ToString "o")
@@ -140,7 +161,9 @@ module IdentityStore =
                       "$kdf", box Kdf
                       "$iterations", box Crypto.Iterations
                       "$salt", box salt
-                      "$secret", box secret ]
+                      "$secret", box secret
+                      "$messagePublic", box identity.MessagingPublicKey
+                      "$messageSecret", box messagingSecret ]
                 |> ignore
 
                 Ok identity
@@ -164,7 +187,7 @@ module IdentityStore =
             let rows =
                 Db.query
                     db
-                    "SELECT display, kdf, iterations, salt, secret FROM identities WHERE handle = $h"
+                    "SELECT display, kdf, iterations, salt, secret, message_secret FROM identities WHERE handle = $h"
                     [ "$h", box handle.Folded ]
                     read
 
@@ -182,9 +205,49 @@ module IdentityStore =
                     let named =
                         Handle.TryParse row.Display |> Result.defaultValue handle
 
-                    let identity = Identity.OfPrivateKey(named, pkcs8)
-                    CryptographicOperations.ZeroMemory(Span pkcs8)
-                    Ok identity
+                    // The messaging half, minted here if this identity predates
+                    // it. UNLOCK IS THE ONLY PLACE THIS CAN HAPPEN, and that is
+                    // forced rather than chosen: the key has to be sealed under
+                    // the password, and this is the one moment in the program's
+                    // life when the password is in hand. Doing it at first send
+                    // instead would mean either holding the password for the
+                    // session or asking for it again to write a key the user
+                    // never asked for.
+                    //
+                    // A wrong password cannot reach here, so a messaging secret
+                    // that will not open under a key that just opened the
+                    // signing half is not a bad password -- it is a store whose
+                    // two columns disagree, which is worth saying out loud
+                    // rather than reporting as the thing it certainly is not.
+                    let messaging =
+                        match row.MessagingSecret with
+                        | Some sealedKey ->
+                            match Crypto.tryOpenSealed derived sealedKey with
+                            | Some plain -> Ok plain
+                            | None -> Error(Unreadable "the messaging key did not open under the password that opened the signing key")
+                        | None ->
+                            let messagingPublic, minted = Messaging.newKeyPair ()
+
+                            Db.executeWith
+                                db
+                                "UPDATE identities SET message_public = $public, message_secret = $secret
+                                 WHERE handle = $handle"
+                                [ "$public", box messagingPublic
+                                  "$secret", box (Crypto.seal derived minted)
+                                  "$handle", box handle.Folded ]
+                            |> ignore
+
+                            Ok minted
+
+                    match messaging with
+                    | Error why ->
+                        CryptographicOperations.ZeroMemory(Span pkcs8)
+                        Error why
+                    | Ok messagingPkcs8 ->
+                        let identity = Identity.OfPrivateKey(named, pkcs8, messagingPkcs8)
+                        CryptographicOperations.ZeroMemory(Span pkcs8)
+                        CryptographicOperations.ZeroMemory(Span messagingPkcs8)
+                        Ok identity
         with e ->
             // Anything the store can throw -- a missing table, a column that
             // will not convert, a key that will not import -- is the store

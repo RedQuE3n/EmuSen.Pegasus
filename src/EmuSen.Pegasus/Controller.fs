@@ -67,6 +67,49 @@ let pinnedTrust (identityRoot: string) (local: Handle) =
                 + "for that handle. Either they have a new identity file, or this is not them."
             )
 
+/// Everything this machine knows about other people, as functions.
+///
+/// One record rather than seven constructor parameters, and one record rather
+/// than three, because these are not seven unrelated capabilities — they are
+/// the single question "what does this machine believe about the people you
+/// talk to", asked about keys, about the list, and about what was said. A
+/// constructor taking seven loose lambdas is a constructor whose arguments get
+/// swapped eventually, and two of these have the same type.
+///
+/// It stays a record of FUNCTIONS rather than a database path for the reason
+/// `trust` always was one: where a machine files what it knows about identities
+/// is not the controller's business, and a headless test must be able to drive
+/// one without writing to whoever is running the suite. `pinnedContacts` is how
+/// the application builds the real one.
+type Contacts =
+    { Trust: PeerInfo -> byte[] -> Result<unit, string>
+      AcceptCard: Card -> Result<Card, string>
+      MessagingKey: Handle -> byte[] option
+      Friends: unit -> Handle[]
+      AddFriend: Handle -> unit
+      RemoveFriend: Handle -> unit
+      /// True when the line was new. False means it had already been recorded,
+      /// which is an ordinary outcome rather than a failure — see Chats.record.
+      Record: Handle -> Line -> bool
+      Conversation: Handle -> Line[] }
+
+/// The real one: pinned keys, the saved buddy list, and saved transcripts, all
+/// scoped to whoever is signed in.
+///
+/// Built from one `identityRoot` and one `local` handle so every part of it
+/// agrees about whose contacts these are. Two identities on a machine are two
+/// people, and a build that scoped the keys by owner while leaving the
+/// transcripts global would put one person's conversations in another's window.
+let pinnedContacts (identityRoot: string) (local: Handle) =
+    { Trust = pinnedTrust identityRoot local
+      AcceptCard = KnownPeers.acceptCard identityRoot local
+      MessagingKey = KnownPeers.messagingKeyFor identityRoot local
+      Friends = fun () -> Friends.all identityRoot local
+      AddFriend = Friends.add identityRoot local
+      RemoveFriend = Friends.remove identityRoot local
+      Record = Chats.record identityRoot local
+      Conversation = Chats.conversation identityRoot local }
+
 /// Owns the workspace, the open note and the session, so the view stays a
 /// function of state. Compaction threshold and projection policy live here.
 ///
@@ -77,13 +120,24 @@ let pinnedTrust (identityRoot: string) (local: Handle) =
 /// no arrangement in which the thing that owns the session does not reach it.
 /// The identity FORMAT is still none of this file's business -- IdentityStore
 /// keeps that -- and `trust` is a parameter for the same reason.
-type Notepad(root: string, self: Identity, trust: PeerInfo -> byte[] -> Result<unit, string>) =
+type Notepad(root: string, self: Identity, contacts: Contacts) =
     let workspace = new Workspace(root)
+
+    // Named locally so every existing use reads as it did. The session layer
+    // takes this one function and never the whole record: a Conversation has no
+    // business with a buddy list.
+    let trust = contacts.Trust
 
     let changed = Event<unit>()
     let stateChanged = Event<ConnectionState>()
     let remotePresence = Event<Presence>()
     let rosterChanged = Event<PeerInfo[]>()
+
+    /// A message that has been written down, ready for a window to show. The
+    /// handle is the correspondent, not the sender — an outbound line and an
+    /// inbound one both belong to the same conversation.
+    let messageRecorded = Event<Handle * Line>()
+    let messageFailed = Event<Handle * string>()
 
     let mutable openNote: (NoteId * DocumentActor * Store.NoteFile * IDisposable) option = None
     let mutable session: Session option = None
@@ -267,12 +321,30 @@ type Notepad(root: string, self: Identity, trust: PeerInfo -> byte[] -> Result<u
                 // The same trust rule the peers get. Chariot proves itself now,
                 // so a server whose key changed is refused on exactly the terms
                 // a person whose key changed is refused.
-                let! r = RelayClient.connectAsync host port passphrase self trust token
+                let! r = RelayClient.connectAsync host port passphrase self trust contacts.AcceptCard contacts.MessagingKey token
                 r.RosterChanged.Add rosterChanged.Trigger
                 r.PresenceChanged.Add remotePresence.Trigger
                 r.PeerJoined.Add(fun p -> setState (Connected p.Handle))
                 r.Faulted.Add(fun e -> setState (Failed e.Message))
                 r.Closed.Add(fun () -> if connection <> Offline then setState Offline)
+
+                // WRITTEN DOWN BEFORE IT IS ANNOUNCED, and the relay is relying
+                // on that: this handler runs inside MessageReceived's trigger,
+                // and the relay acknowledges the message to Chariot only once
+                // the trigger returns (Relay.receiveMessage). Recording after
+                // announcing, or announcing on another thread, would let a
+                // crash land in the window between Chariot forgetting a message
+                // and this machine keeping it.
+                //
+                // The event is raised only for a line that was NEW. A
+                // redelivery — which is ordinary, since anything unacknowledged
+                // comes back — must not add a second line to a window that
+                // already shows it.
+                r.MessageReceived.Add(fun (peer, line) ->
+                    if contacts.Record peer line then
+                        messageRecorded.Trigger(peer, line))
+
+                r.MessageFailed.Add messageFailed.Trigger
                 relay <- Some r
 
                 // Set before the pump starts, for the same reason Join sets
@@ -304,6 +376,50 @@ type Notepad(root: string, self: Identity, trust: PeerInfo -> byte[] -> Result<u
                 }
                 :> Tasks.Task)
         | _ -> failwith "sign in to a server before opening a note with somebody"
+
+    /// A line that has been saved and should appear in a window.
+    member _.MessageRecorded = messageRecorded.Publish
+
+    /// Every way a message did not happen, in words for the person who tried.
+    member _.MessageFailed = messageFailed.Publish
+
+    member _.Friends = contacts.Friends()
+    member _.Conversation(peer: Handle) = contacts.Conversation peer
+    member _.RemoveFriend(peer: Handle) = contacts.RemoveFriend peer
+
+    /// Adds somebody to the buddy list and fetches their card while it is
+    /// nobody's hurry, so the first message of the first conversation does not
+    /// wait on a round trip.
+    member _.AddFriend(peer: Handle) =
+        contacts.AddFriend peer
+
+        match relay with
+        | Some r -> r.PrefetchAsync peer |> ignore
+        | None -> ()
+
+    /// Sends a message, saves it, and announces the saved line.
+    ///
+    /// SAVED WHETHER OR NOT IT COULD BE SENT YET. A message to somebody whose
+    /// card has not arrived is parked in the relay and goes out when it does
+    /// (Relay.SendMessageAsync), and a message sent while offline is refused
+    /// outright below — the difference is visible to the user, which is the
+    /// point. What must never happen is a line the user typed vanishing because
+    /// the network was not ready for it.
+    member _.SendMessage(peer: Handle, body: string) =
+        match relay with
+        | None -> Error "sign in to a server before sending a message"
+        | Some r ->
+            let sending = r.SendMessageAsync(peer, body)
+
+            task {
+                let! line = sending
+
+                if contacts.Record peer line then
+                    messageRecorded.Trigger(peer, line)
+            }
+            |> ignore
+
+            Ok()
 
     member _.Disconnect() =
         cts.Cancel()

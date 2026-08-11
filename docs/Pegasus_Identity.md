@@ -346,3 +346,54 @@ untouched by any of it — `Pegasus_Sync.md` §4.1.
   people who each own their own machine.
 - **Notes are not in SQLite.** §3.3 explains why the `.pegasus` format stays
   where it is, and what would and would not move if it ever changed.
+
+## 10. Two keypairs per identity, and why not one
+
+An identity now holds two keys: the P-256 **signing** key it always had, and a
+P-256 **agreement** key used only for sealing messages. Both are generated
+together, both are sealed under the same password-derived key, and one password
+opens both.
+
+Using the signing key for both jobs would have cost nothing to write. P-256 is
+P-256, and .NET will happily re-import the same private half as an
+`ECDiffieHellman`. It was rejected anyway:
+
+- A key used for two algorithms sits outside what either algorithm's security
+  argument covers. The interactions are studied and unpleasant, and *"there is no
+  known attack against this particular pairing"* is not a sentence this project
+  wants load-bearing in it.
+- The cost of the alternative is one extra keypair per identity and one extra
+  sealed column. That is a small price for an argument that needs no caveat.
+
+**The fingerprint and the caret colour stay derived from the signing key alone**
+(§6). They are what a person reads down a phone line, and changing what they are
+computed from would silently invalidate every pin already on every disk.
+
+One password for both is also deliberate. Two would make it possible to hold an
+identity that can prove who it is and cannot read its own post, which is not a
+state worth being able to reach.
+
+### 10.1 The migration, and the only moment it can happen
+
+An identity created before messaging existed has no agreement key. Its row is
+opened, a key is generated, sealed and written back — **during `unlock`, and
+nowhere else**, because that is the one moment in the program's life when the
+password needed to seal it is in hand. Doing it lazily at first send would mean
+either holding the password for the session or asking for it again to write a key
+the user never asked for.
+
+Two consequences a reader should not have to work out:
+
+- **The signing key does not change**, so every pin anybody holds for that handle
+  is still correct. What changes is the messaging half of their card, which is
+  why `KnownPeers.acceptCard` *updates* a pinned messaging key when the identity
+  key matches rather than freezing it on first sight. Freezing it would make
+  every pre-messaging identity permanently unreachable the moment it upgraded.
+- **It is written back rather than regenerated per unlock.** A key that differed
+  every sign-in would look to everybody who had pinned a card like a different
+  person each time.
+
+A messaging secret that will not open under a password that has just opened the
+signing half is reported as an unreadable store rather than as a wrong password.
+A wrong password cannot reach that branch, so saying "wrong password" there would
+be telling the user the one thing that is certainly not true.

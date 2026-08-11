@@ -73,12 +73,34 @@ type PegasusWindow(pad: Notepad, book: ServerBook) as this =
     /// differs too, but only for somebody who goes and reads it. §13.
     let status = (Ui.Hint "offline").LiveRegion()
 
+    /// One slot per correspondent, so a second message from somebody brings
+    /// their window forward instead of opening another one.
+    ///
+    /// WindowSlot is LunaP's ("at most one of these, else bring it forward" —
+    /// its §8.3), and a dictionary of them is what "at most one PER PERSON"
+    /// looks like. Every touch of this dictionary happens on the dispatcher,
+    /// which is what makes an ordinary Dictionary safe here: messages arrive on
+    /// a socket thread, and `deliver` below marshals before it reaches this.
+    let chats =
+        System.Collections.Generic.Dictionary<string, WindowSlot<Chat.ChatWindow>>()
+
+    let slotFor (peer: Handle) =
+        match chats.TryGetValue peer.Folded with
+        | true, slot -> slot
+        | _ ->
+            let slot = WindowSlot<Chat.ChatWindow>()
+            chats[peer.Folded] <- slot
+            slot
+
+    let openChat (peer: Handle) =
+        Dispatcher.UIThread.Post(fun () -> (slotFor peer).Show(this, (fun () -> Chat.ChatWindow(pad, peer))))
+
     /// The join code lives in the top row and the buddy list reads it from
     /// there, so there is one join code on screen no matter which way you pair.
     /// Passing the getter rather than the box keeps Buddies unable to write to
     /// a control it does not own.
     let buddies =
-        Buddies.BuddyList(pad, (fun () -> code.Text |> Option.ofObj |> Option.defaultValue ""), book)
+        Buddies.BuddyList(pad, (fun () -> code.Text |> Option.ofObj |> Option.defaultValue ""), book, openChat)
 
     /// Who you are signed in as: handle, then the leading half of the
     /// fingerprint, tinted with the colour that is derived from the same key.
@@ -196,6 +218,39 @@ type PegasusWindow(pad: Notepad, book: ServerBook) as this =
 
         pad.Changed.Add(fun () -> pullText ())
         pad.ConnectionChanged.Add(fun s -> Dispatcher.UIThread.Post(fun () -> showStatus s))
+
+        // A message from somebody with no window open opens one, which is what
+        // AIM and Yahoo both did and what makes a messenger usable at all — a
+        // conversation nobody can start without first guessing to open a window
+        // is not a conversation.
+        //
+        // APPENDED ONLY WHEN THE WINDOW WAS ALREADY OPEN. A window built now
+        // loads the saved conversation in its constructor, and the controller
+        // writes the line down BEFORE it announces it (Controller.fs), so the
+        // line is already in that transcript. Appending as well would show every
+        // first message of a conversation twice, and only the first — which is
+        // exactly the kind of defect that survives a demo.
+        pad.MessageRecorded.Add(fun (peer, line) ->
+            Dispatcher.UIThread.Post(fun () ->
+                let slot = slotFor peer
+
+                if slot.IsOpen then
+                    slot.RefreshIfOpen(fun window -> window.Append line)
+                else
+                    slot.Show(this, (fun () -> Chat.ChatWindow(pad, peer)))))
+
+        // Reported where the person is looking if there is a window for that
+        // correspondent, and on the main status line otherwise. A refusal that
+        // appeared only in a window nobody has open is a refusal nobody sees.
+        pad.MessageFailed.Add(fun (peer, why) ->
+            Dispatcher.UIThread.Post(fun () ->
+                let slot = slotFor peer
+
+                if slot.IsOpen then
+                    slot.RefreshIfOpen(fun window -> window.Report why)
+                else
+                    status.Text <- why
+                    status.Foreground <- SolidColorBrush Colors.IndianRed))
 
         // "+" is what it says on screen and that stays -- it is the right button
         // for the job and a wider one would crowd the name box beside it. But

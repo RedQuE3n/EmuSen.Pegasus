@@ -45,6 +45,17 @@ type StubRelay(passphrase: string, identity: Identity) =
     let carried = ConcurrentBag<byte[]>()
     let said = ConcurrentBag<byte[]>()
 
+    /// The card directory, which a messaging client cannot proceed without: a
+    /// message is sealed to a key its recipient published, so a relay that
+    /// cannot answer "what is their key" is a relay nobody can message through.
+    let cards = ConcurrentDictionary<string, Card>()
+
+    /// Post ids, handed out so a client has something to acknowledge. This stub
+    /// keeps no mailbox, which is the one place it is knowingly not the real
+    /// thing — enough to exercise a client, not enough to test redelivery. The
+    /// Chariot suite has the real server for that.
+    let mutable posts = 0L
+
     let write (client: Client) envelope payload =
         task {
             do! client.Gate.WaitAsync()
@@ -164,12 +175,26 @@ type StubRelay(passphrase: string, identity: Identity) =
                     let! envelope, payload = Framing.readSealed client.Stream ct
 
                     match envelope with
-                    | Direct -> ()
-                    | ToHandle destination ->
+                    | Direct ->
+                        // Decodable because the agreement above left the session
+                        // key on the client record. Answers the two frames a
+                        // messaging client cannot proceed without — publish a
+                        // card, ask for one — and reads acknowledgements without
+                        // acting on them, there being no mailbox here to clear.
+                        match Codec.decode (Crypto.openSealed client.Key payload) with
+                        | Card card -> cards[card.Handle.Folded] <- card
+                        | Ask who ->
+                            match cards.TryGetValue who.Folded with
+                            | true, card -> do! say client (Card card)
+                            | _ -> do! say client (Unknown who)
+                        | _ -> ()
+                    | ToHandle(destination, channel) ->
                         carried.Add payload
 
                         match clients.TryGetValue destination.Folded with
-                        | true, target -> do! write target (FromHandle handle) payload
+                        | true, target ->
+                            let post = Interlocked.Increment &posts
+                            do! write target (FromHandle(handle, channel, post)) payload
                         | _ -> ()
                     | FromHandle _ -> ()
             with _ ->

@@ -5,15 +5,23 @@ open System
 /// Wire and file format versions.
 ///
 /// Protocol went to 2 when Hello started carrying a public key and the identity
-/// proof frames appeared, to 3 when Roster did, and to 4 when Agree did. It is
-/// actually sent, in Hello, which it never was at 1 -- two builds that disagreed
-/// used to discover it as a decode failure somewhere further down, and now say
-/// so in the first frame. Adding a tag is a protocol change even though an old
-/// build would only ever meet it by talking to a new one. See Pegasus_Format.md
-/// §1 for the file schema, which is unrelated and unchanged.
+/// proof frames appeared, to 3 when Roster did, to 4 when Agree did, and to 5
+/// when messages did. It is actually sent, in Hello, which it never was at 1 --
+/// two builds that disagreed used to discover it as a decode failure somewhere
+/// further down, and now say so in the first frame. Adding a tag is a protocol
+/// change even though an old build would only ever meet it by talking to a new
+/// one. See Pegasus_Format.md §1 for the file schema, which is unrelated and
+/// unchanged.
+///
+/// 5 IS NOT A TAG-ONLY BUMP and an older build cannot be talked round with
+/// care. The ENVELOPE changed shape -- a routed frame now names the channel it
+/// is on, and a delivery names the post it came out of -- and the envelope is
+/// the one part of a frame a relay reads without holding any key at all. A 4
+/// relay handed a 5 envelope reads the handle it expects and then finds bytes
+/// it has no field for. Pegasus_Sync.md §7.
 module Version =
     [<Literal>]
-    let Protocol = 4uy
+    let Protocol = 5uy
 
     [<Literal>]
     let FileSchema = 1uy
@@ -86,6 +94,27 @@ type NoteId =
     static member New() = NoteId(Guid.NewGuid().ToString("N"))
     member this.Value = let (NoteId v) = this in v
 
+/// Names one message, minted by the sender and never reissued.
+///
+/// THIS IS WHAT MAKES A REDELIVERY HARMLESS, and it exists because a message is
+/// not a Yjs update. The mailbox was built on updates being idempotent -- hand
+/// the same one over twice and the document is unchanged -- so it skipped
+/// deduplication entirely and was correct to (Chariot_Design.md §6). Hand the
+/// same MESSAGE over twice and it appears in the transcript twice, which is a
+/// visible defect rather than a wasted merge. The recipient files messages under
+/// this id and a second copy lands on a primary key that already exists.
+///
+/// It is inside the seal, so the relay cannot read it, cannot deduplicate on the
+/// client's behalf, and cannot correlate two deliveries as being the same
+/// message. That is the correct division: the id is the sender's word to the
+/// recipient, and a relay that could read it would be a relay that could tell
+/// how often two people say the same thing.
+type MessageId =
+    | MessageId of string
+
+    static member New() = MessageId(Guid.NewGuid().ToString("N"))
+    member this.Value = let (MessageId v) = this in v
+
 /// Who is at the other end.
 ///
 /// This used to carry the warning that the handle was asserted and unchecked.
@@ -111,6 +140,31 @@ type Presence =
       Caret: int
       Anchor: int }
 
+/// What kind of traffic a routed payload is.
+///
+/// This rides OUTSIDE the seal, beside the destination, and that is a
+/// deliberate widening of what the relay is told. It was worth arguing about,
+/// because every field added out here is a field Chariot learns, and §5's
+/// promise is that it learns who and when and how big but never what.
+///
+/// The relay needs it because THE TWO CHANNELS HAVE DIFFERENT DELIVERY RULES
+/// and it cannot infer which is which from bytes it cannot open. Note traffic
+/// is Yjs updates: idempotent, order-independent, and safe to drop, because
+/// both replicas converge the next time the two peers are online together. A
+/// message is none of those things -- dropping one destroys it, since there is
+/// no second replica to converge with. So a message is stored until the
+/// recipient acknowledges it and a full queue is refused to the sender, while
+/// note traffic keeps the old trim-the-oldest behaviour it was always safe to
+/// have. Chariot_Design.md §13 carries the correction that forced this.
+///
+/// What it costs is honest and small: Chariot learns whether a payload is a
+/// note edit or a message. It already learned the sender, the recipient, the
+/// time and the length, and this adds one bit to that -- it does not move the
+/// line, which is content.
+type Channel =
+    | NoteTraffic
+    | MessageTraffic
+
 /// The part of a frame an intermediary is allowed to read.
 ///
 /// Everything else on the wire is sealed end to end, which is exactly the
@@ -128,7 +182,7 @@ type Presence =
 /// happen without the relay having put it there.
 type Envelope =
     | Direct
-    | ToHandle of Handle
+    | ToHandle of Handle * Channel
     /// Stamped by a relay on delivery, so the recipient knows whose sealed
     /// payload it is holding. An Update is opaque bytes and says nothing about
     /// who wrote it, so without this a client with two correspondents could not
@@ -138,7 +192,50 @@ type Envelope =
     /// connection signed in, so this is exactly as trustworthy as the relay --
     /// which is why what it names is a handle to route by and never a reason to
     /// skip a signature.
-    | FromHandle of Handle
+    ///
+    /// `post` is the mailbox row this came out of, and it is what the recipient
+    /// acknowledges so the relay may forget it. ZERO MEANS THERE IS NOTHING TO
+    /// ACKNOWLEDGE -- note traffic is forwarded live and never stored, so there
+    /// is no row to clear and an ack for one would name nothing. Every message
+    /// carries a real id, including one delivered to somebody who was online the
+    /// whole time, because a message is stored before it is handed over and not
+    /// instead of being handed over. Chariot_Design.md §13.2.
+    | FromHandle of Handle * Channel * post: int64
+
+/// Everything needed to send somebody a message they can open, and nobody else
+/// can.
+///
+/// A card is published to the relay by its owner and handed out by the relay to
+/// whoever asks. THAT MAKES THE RELAY A KEY DIRECTORY, which is the one place
+/// this design lets it near the question of who is who, so what stops it lying
+/// has to be stated rather than assumed:
+///
+/// - `Messaging` is signed by `Identity`, so a relay cannot swap the messaging
+///   key for one it holds the private half of without also forging a signature
+///   from a key it does not have.
+/// - `Identity` is the key already pinned on first sight (`KnownPeers` in the
+///   application). A card whose identity key is not the pinned one is refused,
+///   so a relay cannot substitute a whole card either.
+///
+/// What it cannot defend is the FIRST card for a handle you have never seen,
+/// which is exactly the first-contact hole trust on first use always has
+/// (Pegasus_Identity.md §7). The mitigation is the same and it is human: the
+/// fingerprint is on screen to be read aloud. A relay that lies at that moment
+/// has been the person you meant from the start, and no amount of signing
+/// inside the system detects it.
+type Card =
+    { Handle: Handle
+      /// The identity public key -- the one that signs challenges and gets
+      /// pinned. Present so a card can be checked against the pin without a
+      /// second lookup.
+      Identity: byte[]
+      /// The messaging public key: P-256, for key agreement, never for signing.
+      /// Messages are sealed to this and opened with the half that never leaves
+      /// its owner's disk.
+      Messaging: byte[]
+      /// `Identity` over `Messaging`, under a domain tag of its own. Messaging.fs
+      /// carries why a tag of its own is not optional.
+      Signature: byte[] }
 
 /// One message on the wire.
 ///
@@ -177,5 +274,56 @@ type Frame =
     /// else: two peers already seal under a join code no intermediary has, so
     /// they have nothing to agree. See Agreement.fs, and Pegasus_Sync.md §4.3.
     | Agree of ephemeral: byte[] * signature: byte[]
+
+    /// A client publishing its own card, or Chariot answering an Ask with
+    /// somebody else's. One frame for both directions because it carries the
+    /// same thing either way, and the handle inside it says whose it is.
+    ///
+    /// PUBLISHED ONLY AFTER THE SENDER HAS PROVED ITSELF. A card accepted
+    /// during the part of sign-in where the far side is still a stranger would
+    /// let anybody overwrite anybody's messaging key by claiming their handle,
+    /// which is the whole attack the directory has to survive. Chariot's
+    /// Server.fs holds it back for exactly that reason.
+    | Card of card: Card
+
+    /// "What is this handle's card?" -- asked of Chariot, because a message can
+    /// be sent to somebody who is not signed in and their key therefore is not
+    /// on any roster.
+    | Ask of who: Handle
+
+    /// "I have no card for that handle." Distinct from a Card frame rather than
+    /// a Card with empty fields: a caller has to tell "nobody by that name" from
+    /// "here are their keys", and an empty byte array is the kind of sentinel
+    /// that gets sealed to by mistake.
+    | Unknown of who: Handle
+
+    /// One instant message. NEVER TRAVELS UNDER THE CONTROL KEY and is never a
+    /// Direct frame: it is sealed to the recipient's messaging key and addressed
+    /// through the relay, so this case is what the recipient decodes after
+    /// opening a payload the relay carried and could not read.
+    ///
+    /// `sentAt` is the SENDER's clock, in Unix milliseconds, and is therefore a
+    /// claim rather than a fact -- two machines disagree, and a sender may lie
+    /// outright. It orders a transcript, which is what it is for; nothing
+    /// security-relevant may rest on it. The recipient files messages in
+    /// arrival order and shows this, which is the same thing every messenger
+    /// does and has the same weakness.
+    | Message of id: MessageId * sentAt: int64 * body: string
+
+    /// "I have these; you may forget them." Sent by a client to Chariot naming
+    /// the mailbox rows it has written to disk.
+    ///
+    /// Post is deleted on this and on nothing else, which is what makes the
+    /// queue durable rather than best-effort: a client that dies between the
+    /// delivery and the disk write gets the message again on its next sign-in,
+    /// and MessageId turns that second copy into a no-op.
+    | Ack of posts: int64[]
+
+    /// "That message did not go anywhere, and here is why." The one refusal a
+    /// sender is told about rather than merely logged, because a message that
+    /// was never delivered and a message that was are indistinguishable on a
+    /// sender's screen otherwise -- and silently indistinguishable is exactly
+    /// what a mailbox that drops post looks like. Chariot_Design.md §13.1.
+    | Undeliverable of who: Handle * why: string
 
 exception ProtocolError of string

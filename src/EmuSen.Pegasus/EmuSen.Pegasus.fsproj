@@ -40,14 +40,30 @@
          Like the core's, THE RELEASED VERSION COMES FROM THE TAG: release.yml
          strips the `v` and passes -p:Version, so a `v*` tag decides what the
          binaries call themselves. This number is the default for a local
-         `dotnet publish` and is kept in step so the two never disagree - §15. -->
-    <Version>0.3.0</Version>
+         `dotnet publish` and is kept in step so the two never disagree - §15.
+
+         0.4.0 is messaging: a saved buddy list, a chat window per
+         correspondent, transcripts on disk, and post that waits at a relay
+         sealed to a key the relay does not hold. The two numbers agreeing with
+         the core's 0.4.0 is a coincidence again -- the core moved because the
+         protocol did, and this moved because the window did. What has to agree
+         between two installations is the protocol number in Hello, not the
+         version on the download, and this release cannot talk to a 0.3.0 one.
+         Pegasus_Sync.md §7. -->
+    <Version>0.4.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Include="Db.fs" />
     <Compile Include="IdentityStore.fs" />
     <Compile Include="KnownPeers.fs" />
+    <!-- Both are stores over the same database and neither knows anything about
+         a socket, so they sit up here with the other stores rather than beside
+         the relay that fills them. Chats after Friends only for readability;
+         they do not reference each other, and deliberately so - forgetting a
+         conversation and removing a buddy are separate acts. -->
+    <Compile Include="Friends.fs" />
+    <Compile Include="Chats.fs" />
     <Compile Include="Servers.fs" />
     <Compile Include="Document.fs" />
     <Compile Include="Store.fs" />
@@ -56,6 +72,12 @@
     <Compile Include="Relay.fs" />
     <Compile Include="Controller.fs" />
     <Compile Include="Buddies.fs" />
+    <!-- After Buddies because Shell wires the two together and this is the
+         window Buddies asks for by callback; before Shell because Shell owns
+         one slot per correspondent. Buddies deliberately does not reference
+         this - it takes a function - so the buddy panel stays testable without
+         a window manager. -->
+    <Compile Include="Chat.fs" />
     <Compile Include="SignIn.fs" />
     <Compile Include="Shell.fs" />
     <Compile Include="Program.fs" />

@@ -18,6 +18,7 @@
     <Compile Include="EnvelopeTests.fs" />
     <Compile Include="NetTests.fs" />
     <Compile Include="RelayTests.fs" />
+    <Compile Include="MessagingTests.fs" />
     <Compile Include="UiTests.fs" />
     <Compile Include="StartupTests.fs" />
     <Compile Include="AccessTests.fs" />

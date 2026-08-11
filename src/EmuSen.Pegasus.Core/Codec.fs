@@ -38,6 +38,24 @@ module Codec =
     let private TagAgree = 9uy
 
     [<Literal>]
+    let private TagCard = 10uy
+
+    [<Literal>]
+    let private TagAsk = 11uy
+
+    [<Literal>]
+    let private TagUnknown = 12uy
+
+    [<Literal>]
+    let private TagMessage = 13uy
+
+    [<Literal>]
+    let private TagAck = 14uy
+
+    [<Literal>]
+    let private TagUndeliverable = 15uy
+
+    [<Literal>]
     let private TagDirect = 0uy
 
     [<Literal>]
@@ -45,6 +63,17 @@ module Codec =
 
     [<Literal>]
     let private TagFromHandle = 2uy
+
+    // Channel tags live in their own numbering because they sit in the envelope
+    // rather than in a frame, and the two are read by different things: a relay
+    // reads the envelope holding no key, and only a peer ever reads a frame tag.
+    // Sharing one numbering between them would make an off-by-one in either
+    // decode as a plausible value in the other.
+    [<Literal>]
+    let private TagNoteTraffic = 0uy
+
+    [<Literal>]
+    let private TagMessageTraffic = 1uy
 
     /// Frames are bounded so a malformed or hostile length cannot make us
     /// allocate arbitrarily; see Pegasus_Sync.md §5.
@@ -84,6 +113,14 @@ module Codec =
               Handle = parsed
               Color = color }
 
+    /// Same rule as readPeer, for the frames that carry a bare handle: the
+    /// grammar is checked here so nothing downstream has to wonder whether a
+    /// Handle it is holding came off a socket.
+    let private readHandle (r: BinaryReader) =
+        match Handle.TryParse(r.ReadString()) with
+        | Error why -> raise (ProtocolError $"frame names an unusable handle: {why}")
+        | Ok handle -> handle
+
     /// Serialise a frame to its plaintext body. Encryption and length-prefixing
     /// happen above this, in Pegasus.Net.
     let encode (frame: Frame) : byte[] =
@@ -118,6 +155,33 @@ module Codec =
                 w.Write ephemeral.Length
                 w.Write ephemeral
                 w.Write signature)
+        | Card card ->
+            // Three variable-length blobs, so two of them state their length
+            // and the last takes what is left. Same rule as Agree, one blob
+            // further along.
+            writeWith TagCard (fun w ->
+                w.Write card.Handle.Value
+                w.Write card.Identity.Length
+                w.Write card.Identity
+                w.Write card.Messaging.Length
+                w.Write card.Messaging
+                w.Write card.Signature)
+        | Ask who -> writeWith TagAsk (fun w -> w.Write who.Value)
+        | Unknown who -> writeWith TagUnknown (fun w -> w.Write who.Value)
+        | Message(id, sentAt, body) ->
+            writeWith TagMessage (fun w ->
+                w.Write id.Value
+                w.Write sentAt
+                w.Write body)
+        | Ack posts ->
+            writeWith TagAck (fun w ->
+                w.Write posts.Length
+                for post in posts do
+                    w.Write post)
+        | Undeliverable(who, why) ->
+            writeWith TagUndeliverable (fun w ->
+                w.Write who.Value
+                w.Write why)
 
     let decode (body: byte[]) : Frame =
         if body.Length = 0 then
@@ -177,25 +241,97 @@ module Codec =
                     { Peer = peer
                       Caret = r.ReadInt32()
                       Anchor = r.ReadInt32() }
+            | TagCard ->
+                use r = new BinaryReader(new MemoryStream(payload), UTF8Encoding false)
+                let handle = readHandle r
+
+                // Each declared length is checked against the frame actually in
+                // hand before it becomes an allocation. A card arrives from the
+                // network from a party that has not necessarily proved anything
+                // yet, which makes this the most exposed decode in the file.
+                let readBlob (what: string) =
+                    let length = r.ReadInt32()
+
+                    if length < 0 || length > payload.Length then
+                        raise (ProtocolError $"card declares a {length}-byte {what} inside a {payload.Length}-byte frame")
+
+                    r.ReadBytes length
+
+                let identity = readBlob "identity key"
+                let messaging = readBlob "messaging key"
+
+                Card
+                    { Handle = handle
+                      Identity = identity
+                      Messaging = messaging
+                      Signature = r.ReadBytes(payload.Length - int r.BaseStream.Position) }
+            | TagAsk ->
+                use r = new BinaryReader(new MemoryStream(payload), UTF8Encoding false)
+                Ask(readHandle r)
+            | TagUnknown ->
+                use r = new BinaryReader(new MemoryStream(payload), UTF8Encoding false)
+                Unknown(readHandle r)
+            | TagMessage ->
+                use r = new BinaryReader(new MemoryStream(payload), UTF8Encoding false)
+                Message(MessageId(r.ReadString()), r.ReadInt64(), r.ReadString())
+            | TagAck ->
+                use r = new BinaryReader(new MemoryStream(payload), UTF8Encoding false)
+                let count = r.ReadInt32()
+
+                // Eight bytes each, so a count past that many cannot be honest
+                // and must not become an allocation. Same rule as Roster's,
+                // with the size that applies here.
+                if count < 0 || count > (payload.Length - 4) / 8 then
+                    raise (ProtocolError $"ack claims {count} posts in a {payload.Length}-byte frame")
+
+                Ack(Array.init count (fun _ -> r.ReadInt64()))
+            | TagUndeliverable ->
+                use r = new BinaryReader(new MemoryStream(payload), UTF8Encoding false)
+                Undeliverable(readHandle r, r.ReadString())
             | unknown -> raise (ProtocolError $"unknown frame tag {unknown}")
         with
         | :? EndOfStreamException -> raise (ProtocolError $"truncated payload for frame tag {tag}")
         | :? ArgumentException -> raise (ProtocolError $"malformed payload for frame tag {tag}")
 
-    let private addressed (tag: byte) (handle: Handle) =
-        use ms = new MemoryStream()
-        use w = new BinaryWriter(ms, UTF8Encoding false, true)
-        w.Write tag
-        w.Write handle.Value
-        w.Flush()
-        ms.ToArray()
+    let private channelTag channel =
+        match channel with
+        | NoteTraffic -> TagNoteTraffic
+        | MessageTraffic -> TagMessageTraffic
+
+    /// An unknown channel is refused rather than defaulted to notes.
+    ///
+    /// Defaulting would be the friendlier-looking choice and it is the wrong
+    /// one: the channel decides whether the relay may drop a payload when the
+    /// queue is full, so guessing it wrong on a message is exactly the silent
+    /// data loss the channel exists to prevent. A frame this build cannot
+    /// classify is a frame it must not carry.
+    let private readChannel (r: BinaryReader) =
+        match r.ReadByte() with
+        | TagNoteTraffic -> NoteTraffic
+        | TagMessageTraffic -> MessageTraffic
+        | unknown -> raise (ProtocolError $"unknown channel tag {unknown}")
 
     /// The envelope goes on the wire in the clear, ahead of the sealed payload.
     let encodeEnvelope (envelope: Envelope) : byte[] =
+        let addressed (tag: byte) (write: BinaryWriter -> unit) =
+            use ms = new MemoryStream()
+            use w = new BinaryWriter(ms, UTF8Encoding false, true)
+            w.Write tag
+            write w
+            w.Flush()
+            ms.ToArray()
+
         match envelope with
         | Direct -> [| TagDirect |]
-        | ToHandle handle -> addressed TagToHandle handle
-        | FromHandle handle -> addressed TagFromHandle handle
+        | ToHandle(handle, channel) ->
+            addressed TagToHandle (fun w ->
+                w.Write handle.Value
+                w.Write(channelTag channel))
+        | FromHandle(handle, channel, post) ->
+            addressed TagFromHandle (fun w ->
+                w.Write handle.Value
+                w.Write(channelTag channel)
+                w.Write post)
 
     /// Returns the envelope and how many bytes it used, because the sealed
     /// payload begins immediately after it and the caller has to find it. A
@@ -219,8 +355,13 @@ module Codec =
                 match Handle.TryParse raw with
                 | Error why -> raise (ProtocolError $"envelope names an unusable handle: {why}")
                 | Ok handle ->
+                    let channel = readChannel r
+
                     let envelope =
-                        if buffer[0] = TagToHandle then ToHandle handle else FromHandle handle
+                        if buffer[0] = TagToHandle then
+                            ToHandle(handle, channel)
+                        else
+                            FromHandle(handle, channel, r.ReadInt64())
 
                     envelope, 1 + int ms.Position
             | unknown -> raise (ProtocolError $"unknown envelope tag {unknown}")
