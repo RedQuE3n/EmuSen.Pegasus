@@ -276,7 +276,7 @@ launch agent, nothing in `~/Library`. This falls out of shipping a self-containe
 single file rather than being a feature anyone implemented.
 
 **Two versions that must not disagree**: this page describes application 0.1.0.
-The wire protocol is **4**, carried by `EmuSen.Pegasus.Core` 0.2.2, and it is the
+The wire protocol is **4**, carried by `EmuSen.Pegasus.Core` 0.3.0, and it is the
 protocol number in `Hello` — not the version on the download — that decides
 whether two programs can talk. A Pegasus and a Chariot on different application
 versions are fine as long as the protocol matches, and `Hello` says so in the

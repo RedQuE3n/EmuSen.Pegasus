@@ -22,7 +22,7 @@
 
     <!-- The APPLICATION's version, and it is deliberately not the core's. This
          repository holds two things that are released separately: the core is a
-         package on `core-v*` tags and is already at 0.2.2, while this is the
+         package on `core-v*` tags and is already at 0.3.0, while this is the
          desktop program and starts at 0.1.0 on a `v*` tag. §7.1 predicted this
          collision and reserved the namespace for it before there was anything
          to put in it, which is why the first application release needed no tag
