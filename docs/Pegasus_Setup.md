@@ -9,7 +9,7 @@ Everything here was checked against the 0.1.0 binaries rather than reasoned
 about, except where it says otherwise — and where a claim could not be checked,
 it says so rather than sounding confident. §11 collects the untested ones.
 
-**That checking has not been repeated against 0.2.0.** The page names 0.2.0
+**That checking has not been repeated against 0.3.0.** The page names 0.3.0
 throughout because that is the release it describes, but what sits between the
 two versions is the licence, an accessible name on every tab stop, window
 padding, and a build matrix — none of which moves a path, a port, a file or a
@@ -56,14 +56,14 @@ Because nothing is signed, each platform will object once.
 **Linux** objects to nothing. Extract, mark executable if your extractor did not,
 run it:
 
-    tar xzf Pegasus-0.2.0-linux-x64.tar.gz
+    tar xzf Pegasus-0.3.0-linux-x64.tar.gz
     ./Pegasus-linux-x64/EmuSen.Pegasus
 
 **macOS** attaches a quarantine flag to anything downloaded, and Gatekeeper
 refuses unsigned quarantined code with a dialog that offers no way past it.
 Strip the flag:
 
-    tar xzf Pegasus-0.2.0-osx-arm64.tar.gz
+    tar xzf Pegasus-0.3.0-osx-arm64.tar.gz
     xattr -dr com.apple.quarantine Pegasus-osx-arm64/EmuSen.Pegasus.app
     open Pegasus-osx-arm64/EmuSen.Pegasus.app
 
@@ -275,10 +275,10 @@ no reset, because there is no authority to ask for one.
 ## 10. Upgrading and removing
 
 Upgrading is replacing the executable. Nothing in either program writes a version
-into its state, and neither has a migration to run on the 0.1.0 → 0.2.0 line.
+into its state, and neither has a migration to run on the 0.1.0 → 0.3.0 line.
 That was checked rather than assumed: every file that touches storage —
 `Db.fs`, `Store.fs`, `Document.fs`, `IdentityStore.fs`, `KnownPeers.fs`,
-`Servers.fs`, `Workspace.fs` — is unchanged since the `v0.1.0` tag, so 0.2.0
+`Servers.fs`, `Workspace.fs` — is unchanged since the `v0.1.0` tag, so 0.3.0
 reads identities, notes and the relay's accounts exactly as 0.1.0 left them.
 The protocol did not move either, so an upgraded end and a not-yet-upgraded one
 still pair.
@@ -288,7 +288,7 @@ Nothing is installed elsewhere: no registry keys, no `/usr/lib` drop, no
 launch agent, nothing in `~/Library`. This falls out of shipping a self-contained
 single file rather than being a feature anyone implemented.
 
-**Two versions that must not disagree**: this page describes application 0.2.0.
+**Two versions that must not disagree**: this page describes application 0.3.0.
 The wire protocol is **4**, carried by `EmuSen.Pegasus.Core` 0.3.0, and it is the
 protocol number in `Hello` — not the version on the download — that decides
 whether two programs can talk. A Pegasus and a Chariot on different application
@@ -300,14 +300,14 @@ first frame rather than letting it be discovered as a decode failure further dow
 Collected rather than scattered, because a reader deciding whether to use this
 deserves them in one place.
 
-- **No 0.2.0 binary has been run, on any platform.** This is the largest gap on
+- **No 0.3.0 binary has been run, on any platform.** This is the largest gap on
   this page and it is not hidden in it. Half of it improved and half of it got
   worse, so both halves are stated. **Improved:** each platform is now built by
   the operating system it targets rather than cross-compiled on Linux, so the
   macOS and Windows builds are no longer produced by a machine that could not
   run them (`Pegasus_Design.md` §15.1). **Worse:** on 0.1.0 the Linux builds of
   both programs were launched by hand and exercised, and nobody has done that
-  for 0.2.0 — a CI runner has no display, and Pegasus has no `--help` to
+  for 0.3.0 — a CI runner has no display, and Pegasus has no `--help` to
   exercise instead. Chariot is the exception: it is a daemon, so its release
   does start every build and check that it parses arguments and exits.
 - **The `~/.local/share` path on macOS is inferred**, from .NET's Unix behaviour,

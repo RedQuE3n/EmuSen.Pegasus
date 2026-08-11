@@ -1071,3 +1071,19 @@ Two measurements, both taken rather than remembered. A local `linux-x64` self-co
 - **The GUI is never launched by the release**, per §15.1.
 - **No `linux-arm64` build**, so a Raspberry Pi still cannot run a released Chariot or Pegasus. Building from source on the machine is one `dotnet publish` and `Pegasus_Setup.md` §11 says so.
 - **The release notes are prose in the repository** at `docs/Releases/<tag>.md`, so they are reviewed with the change they describe. A tag with no notes file falls back to generated notes rather than failing: the binaries are the thing being shipped and a missing paragraph must not block them.
+
+### 15.4 0.2.0 was spent on a retired runner image, and the pin is what spent it
+
+**`v0.2.0` was tagged, built three platforms, published nothing, and did not fail.** It is recorded here rather than quietly retagged because the failure mode is the interesting part and somebody will meet it again.
+
+The matrix above asked for `macos-13` for the `osx-x64` build. **That image was retired on 4 December 2025.** The observed run — `test` green, `linux-x64` green, `win-x64` green, `osx-arm64` green, `osx-x64` **queued**, indefinitely — is what a retired label looks like from the outside. The replacement is `macos-15-intel`, and the matrix now names it.
+
+Three things in that are worth keeping.
+
+**A retired runner label does not error, it queues.** There is no red job, no message, and nothing in the run's summary that says the label is gone. `fail-fast: true` never tripped because nothing failed, and §15.2's own reasoning — that a release missing a platform is worse than no release — worked exactly as designed: `release` needs all four builds, three arrived, and the job simply never started. **The safety property held and the diagnosis was still invisible.** A release that fails loudly is a better outcome than three greens and silence, and this file has no way to ask for that; the check has to be a human reading the run, or a date in a calendar.
+
+**The pin is what caused it, and unpinning is still the wrong fix.** §15.1 argued for naming images explicitly rather than `macos-latest`, on the grounds that `latest` had already moved from Intel to Apple Silicon once and would silently turn `osx-x64` back into a cross-compile. That argument is unchanged and still right. But a pin trades drift for expiry: `macos-latest` would have kept building something, whereas `macos-13` stopped building anything. **Both failure modes are real and only one of them is quiet in the direction that matters** — a cross-compiled binary ships and is wrong about how it was made; a retired image ships nothing at all. The second is the safer of the two to have, and it is the one to plan for rather than design away.
+
+**There is now a date this repository has to meet.** `macos-15-intel` is the **last x86_64 image GitHub Actions will offer, and it goes away in August 2027.** Apple has discontinued the architecture and Actions follows it. After that, `osx-x64` cannot be built on Intel hardware here at all, and the choice will be to cross-compile it from an Apple Silicon runner — which is a real option and would need this section's honesty about what "built on a Mac" then means — or to stop shipping it. It is written down because a runner image with a known end date is exactly the kind of thing that is remembered right up until the release it breaks.
+
+Chariot took the identical defect from the identical file on the same day, and `Chariot_Design.md` §12.3 records it there.

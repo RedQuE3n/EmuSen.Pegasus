@@ -32,11 +32,16 @@
          forces the core's version, a change to the window forces this one, and
          tying them would make every frame edit look like a new notepad.
 
+         That this now reads 0.3.0, the same as the core, is a COINCIDENCE and
+         not a re-tying of the two. The core reached 0.3.0 on the relicence;
+         this reached it because 0.2.0 was spent on a release that built three
+         platforms and published none - §15.4.
+
          Like the core's, THE RELEASED VERSION COMES FROM THE TAG: release.yml
          strips the `v` and passes -p:Version, so a `v*` tag decides what the
          binaries call themselves. This number is the default for a local
          `dotnet publish` and is kept in step so the two never disagree - §15. -->
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
