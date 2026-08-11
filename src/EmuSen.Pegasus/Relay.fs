@@ -34,7 +34,19 @@ open System.Threading
 /// with it, so a server whose key has changed is refused exactly the way a
 /// person whose key has changed is refused -- one implementation, one table, one
 /// thing to reason about.
-type Relay(stream: Stream, self: Identity, passphrase: string, trust: PeerInfo -> byte[] -> Result<unit, string>) =
+type Relay
+    (
+        stream: Stream,
+        self: Identity,
+        passphrase: string,
+        trust: PeerInfo -> byte[] -> Result<unit, string>,
+        // Both are functions rather than a database path for the reason `trust`
+        // already is: where a machine files what it believes about identities is
+        // not this type's business, and a headless test should be able to drive
+        // a relay without writing to whoever is running the suite.
+        acceptCard: Card -> Result<Card, string>,
+        messagingKeyFor: Handle -> byte[] option
+    ) =
     /// The doorbell: what Handshake ran on, and what the sign-in exchange itself
     /// is sealed under. Everything after the agreement uses the session key.
     let doorKey = Crypto.deriveKey passphrase
@@ -45,6 +57,15 @@ type Relay(stream: Stream, self: Identity, passphrase: string, trust: PeerInfo -
     let presenceChanged = Event<Presence>()
     let faulted = Event<exn>()
     let closed = Event<unit>()
+    let messageReceived = Event<Handle * Line>()
+
+    /// Everything a user has to be told about a message that did not happen:
+    /// a relay that would not carry it, a handle it has never heard of, a card
+    /// that failed its checks, a payload that did not open. All four are
+    /// ordinary and none of them is an exception — a message that silently did
+    /// not arrive is precisely the failure this whole channel was rebuilt to
+    /// stop having.
+    let messageFailed = Event<Handle * string>()
 
     // Serialises writes across every conversation sharing this socket, which is
     // the price of multiplexing: two frames interleaved would decode as neither.
@@ -53,6 +74,33 @@ type Relay(stream: Stream, self: Identity, passphrase: string, trust: PeerInfo -
     /// One live conversation per correspondent, keyed by their folded handle,
     /// because that is what a delivery is stamped with.
     let conversations = ConcurrentDictionary<string, Conversation * byte[]>()
+
+    /// Messages that arrived from somebody whose card this client does not hold
+    /// yet, and messages this client was asked to send before it held the
+    /// recipient's.
+    ///
+    /// BOTH DIRECTIONS NEED A WAITING ROOM and it is the same cause: a message
+    /// is sealed with two Diffie-Hellman agreements (Messaging.fs), and one of
+    /// them uses the OTHER party's messaging key — so neither sealing nor
+    /// opening is possible until the card has been fetched. The fetch is a round
+    /// trip to the relay, and a round trip cannot happen inside the function
+    /// that discovers it is needed.
+    ///
+    /// Bounded, because an unbounded one is a way to make a client allocate:
+    /// anybody may address a payload to anybody, so incoming holds a fixed
+    /// number per sender and drops the oldest beyond it. Dropping there is safe
+    /// in a way it is NOT safe at the relay — nothing is acknowledged until it
+    /// has been written down, so a message dropped from this room is one Chariot
+    /// still holds and will hand over again.
+    let incoming = ConcurrentDictionary<string, ResizeArray<int64 * byte[]>>()
+    let outgoing = ConcurrentDictionary<string, ResizeArray<MessageId * int64 * string>>()
+
+    [<Literal>]
+    let WaitingRoom = 64
+
+    /// Handles a card has been asked for, so a burst of traffic from one
+    /// stranger asks once rather than once per frame.
+    let asked = ConcurrentDictionary<string, unit>()
 
     let mutable roster: PeerInfo[] = [||]
 
@@ -102,7 +150,7 @@ type Relay(stream: Stream, self: Identity, passphrase: string, trust: PeerInfo -
     /// conversation is given its send function and its events.
     let start (correspondent: Handle) (joinKey: byte[]) document trust =
         let send frame =
-            writeSealed (ToHandle correspondent) (Crypto.seal joinKey (Codec.encode frame))
+            writeSealed (ToHandle(correspondent, NoteTraffic)) (Crypto.seal joinKey (Codec.encode frame))
 
         let conversation = new Conversation(send, self, document, trust)
         conversation.Faulted.Add faulted.Trigger
@@ -110,6 +158,122 @@ type Relay(stream: Stream, self: Identity, passphrase: string, trust: PeerInfo -
         conversation.PresenceChanged.Add presenceChanged.Trigger
         conversations[correspondent.Folded] <- (conversation, joinKey)
         conversation
+
+    /// Asks the relay for somebody's card, at most once per handle per session.
+    ///
+    /// Once, because a stranger sending twenty messages before their card
+    /// arrives would otherwise produce twenty identical questions. The answer
+    /// releases everything waiting on it in one go, so the second question would
+    /// buy nothing but traffic.
+    let ask (peer: Handle) =
+        task {
+            if asked.TryAdd(peer.Folded, ()) then
+                do! say (Ask peer)
+        }
+
+    let park (room: ConcurrentDictionary<string, ResizeArray<'a>>) (peer: Handle) (item: 'a) =
+        let queue = room.GetOrAdd(peer.Folded, (fun _ -> ResizeArray()))
+
+        lock queue (fun () ->
+            // Oldest out. A waiting room that refused new arrivals once full
+            // would stay full forever, which is the same argument the mailbox
+            // makes for trimming from the front.
+            if queue.Count >= WaitingRoom then queue.RemoveAt 0
+            queue.Add item)
+
+    let take (room: ConcurrentDictionary<string, ResizeArray<'a>>) (peer: Handle) =
+        match room.TryRemove peer.Folded with
+        | true, queue -> lock queue (fun () -> queue.ToArray())
+        | _ -> [||]
+
+    let sealFor (peer: Handle) (their: byte[]) (id: MessageId, sentAt: int64, body: string) =
+        writeSealed (ToHandle(peer, MessageTraffic)) (Messaging.seal self their (Codec.encode (Message(id, sentAt, body))))
+
+    /// Opens a delivered message, hands it up, and only then acknowledges it.
+    ///
+    /// THE ORDER OF THE LAST TWO LINES IS THE DURABILITY GUARANTEE. Ack is what
+    /// lets Chariot delete its copy (Types.fs), so acknowledging before the
+    /// subscriber has written the line down would open a window in which the
+    /// only two copies of a message are a socket buffer and a UI event. The
+    /// trigger is synchronous, so by the time it returns the recorder has run
+    /// and the line is on disk; a client that dies before that point simply
+    /// never acks, and Chariot hands the message over again on the next sign-in.
+    ///
+    /// A PAYLOAD THAT WILL NOT OPEN IS ACKNOWLEDGED ANYWAY, which looks wrong
+    /// and is the lesser of two real evils. It cannot open later — the card is
+    /// known by the time this runs, and a wrong key does not become right — so
+    /// declining to ack would leave it in the queue forever. Since the queue is
+    /// now bounded AND refuses new post when full (Chariot_Design.md §13.1),
+    /// that would let anybody with an account permanently wedge somebody's
+    /// mailbox by posting one blob of noise. So it is dropped and REPORTED: the
+    /// user is told a message arrived that could not be read, which is the
+    /// honest description of what happened.
+    let receiveMessage (sender: Handle) (their: byte[]) (post: int64) (payload: byte[]) =
+        task {
+            match Messaging.tryOpen self their payload with
+            | None ->
+                messageFailed.Trigger(
+                    sender,
+                    $"a message from {sender.Value} could not be opened. It was not sealed with the key {sender.Value} published, "
+                    + "so it was not written by them."
+                )
+
+                do! say (Ack [| post |])
+            | Some plain ->
+                match Codec.decode plain with
+                | Message(id, sentAt, body) ->
+                    messageReceived.Trigger(
+                        sender,
+                        { Id = id
+                          Outbound = false
+                          SentAt = DateTimeOffset.FromUnixTimeMilliseconds sentAt
+                          Body = body }
+                    )
+
+                    do! say (Ack [| post |])
+                | other ->
+                    // Sealed correctly, so this really is the correspondent —
+                    // and they sent something that is not a message on the
+                    // message channel. Not fatal to the session: one confused
+                    // correspondent must not cost a working conversation with
+                    // somebody else.
+                    messageFailed.Trigger(sender, $"{sender.Value} sent a {other.GetType().Name} on the message channel")
+                    do! say (Ack [| post |])
+        }
+
+    /// Takes a card the relay handed over, then releases everything that was
+    /// waiting on it.
+    ///
+    /// A REFUSED CARD DOES NOT DISCARD THE POST WAITING BEHIND IT, and that is
+    /// the deliberate opposite of the unopenable-payload rule above. The two
+    /// look similar and are not: a payload that will not open is noise and
+    /// cannot become anything else, while a refused card means the pin says this
+    /// is not who the relay claims — which is a loud, human, recoverable event.
+    /// The messages behind it may well be genuine, so they are left
+    /// unacknowledged, Chariot keeps them, and they are handed over again once
+    /// the person sorts out whose key is whose. Losing somebody's post as a side
+    /// effect of noticing a possible impostor would be the worst possible
+    /// response to noticing one.
+    ///
+    /// The cost is honest: an attacker who can make a bad card be served for a
+    /// handle can hold a slice of that mailbox until a human intervenes. The
+    /// sender is told (Undeliverable), the recipient is told, and neither is
+    /// left guessing — which is the property being bought.
+    let learn (card: Card) =
+        task {
+            match acceptCard card with
+            | Error why ->
+                // Cleared so a later card for the same handle is asked for
+                // again rather than assumed to be on its way.
+                asked.TryRemove card.Handle.Folded |> ignore
+                messageFailed.Trigger(card.Handle, why)
+            | Ok accepted ->
+                for post, payload in take incoming card.Handle do
+                    do! receiveMessage card.Handle accepted.Messaging post payload
+
+                for message in take outgoing card.Handle do
+                    do! sealFor card.Handle accepted.Messaging message
+        }
 
     member _.Roster = roster
     member _.RosterChanged = rosterChanged.Publish
@@ -127,6 +291,52 @@ type Relay(stream: Stream, self: Identity, passphrase: string, trust: PeerInfo -
     /// Who the server proved itself to be, once it has. None before sign-in
     /// completes, and there is no unproven form of this to accidentally show.
     member _.Server = server
+
+    /// One message, opened and attributed. The handle is proved rather than
+    /// relayed: it is the correspondent whose published messaging key the
+    /// payload was actually sealed with, not the name stamped on the envelope.
+    member _.MessageReceived = messageReceived.Publish
+
+    /// Every way a message did not happen, in words meant for the person who
+    /// tried to send or receive it.
+    member _.MessageFailed = messageFailed.Publish
+
+    /// Sends an instant message and returns the line to save.
+    ///
+    /// The line comes back whether or not the message could be sealed yet,
+    /// because it is going to be shown either way: a message parked waiting for
+    /// its recipient's card has been written by the user, is in the transcript,
+    /// and will go out the moment the card arrives. Returning nothing until the
+    /// round trip finished would make typing to a new correspondent feel like
+    /// typing into a window that eats the first line.
+    member _.SendMessageAsync(peer: Handle, body: string) =
+        task {
+            let id = MessageId.New()
+            let sentAt = DateTimeOffset.UtcNow
+            let stamp = sentAt.ToUnixTimeMilliseconds()
+
+            match messagingKeyFor peer with
+            | Some their -> do! sealFor peer their (id, stamp, body)
+            | None ->
+                park outgoing peer (id, stamp, body)
+                do! ask peer
+
+            return
+                { Id = id
+                  Outbound = true
+                  SentAt = sentAt
+                  Body = body }
+        }
+
+    /// Fetches somebody's card ahead of needing it, so the first message of a
+    /// conversation does not pay for the round trip. Called when a chat window
+    /// opens and when the friends list is loaded.
+    member _.PrefetchAsync(peer: Handle) =
+        task {
+            match messagingKeyFor peer with
+            | Some _ -> ()
+            | None -> do! ask peer
+        }
 
     /// Signing in: both ends prove who they are, and then agree a key nobody
     /// holding the passphrase can derive.
@@ -209,6 +419,19 @@ type Relay(stream: Stream, self: Identity, passphrase: string, trust: PeerInfo -
                     | _ -> raise (ProtocolError "the server offered a key agreement before proving who it was")
 
                 | other -> raise (ProtocolError $"expected a sign-in frame, got {other.GetType().Name}")
+
+            // Published last, under the agreed session key rather than the door
+            // key, and after this client has proved itself. Both matter. Under
+            // the door key it would be readable by every other client, which is
+            // the weakness the agreement exists to remove; before the proof it
+            // would be a stranger claiming a handle, and the relay must not file
+            // a messaging key against a name nobody has demonstrated they own.
+            //
+            // Sent unprompted on every sign-in rather than only when it changes,
+            // because the client cannot know what the relay is holding -- a
+            // server rebuilt from an empty database has no cards at all, and a
+            // client that published once would be unreachable on it forever.
+            do! say (Card(Messaging.cardOf self))
         }
 
     /// Says what to do with an unexpected correspondent: which note they are
@@ -264,8 +487,34 @@ type Relay(stream: Stream, self: Identity, passphrase: string, trust: PeerInfo -
                         | Roster peers ->
                             roster <- peers
                             rosterChanged.Trigger peers
+                        | Card card -> do! learn card
+                        | Unknown who ->
+                            // The relay has never heard of them. Everything
+                            // parked for that handle is released as a failure
+                            // rather than left looking like post still in
+                            // flight, which is what an unbounded wait looks
+                            // like from a window.
+                            asked.TryRemove who.Folded |> ignore
+                            take outgoing who |> ignore
+
+                            messageFailed.Trigger(
+                                who,
+                                $"{who.Value} has never signed in to this server, so there is no key to send to."
+                            )
+                        | Undeliverable(who, why) -> messageFailed.Trigger(who, why)
                         | _ -> ()
-                    | FromHandle sender ->
+                    | FromHandle(sender, MessageTraffic, post) ->
+                        // Attribution is done by which key opens it, not by
+                        // whose name is on the envelope — the stamp is the
+                        // relay's word (Types.fs). Until the card is here there
+                        // is nothing to check it against, so the payload waits
+                        // rather than being opened optimistically.
+                        match messagingKeyFor sender with
+                        | Some their -> do! receiveMessage sender their post payload
+                        | None ->
+                            park incoming sender (post, payload)
+                            do! ask sender
+                    | FromHandle(sender, NoteTraffic, _) ->
                         // Create one on first contact if we are open to being
                         // invited, so neither end has to speak first.
                         if not (conversations.ContainsKey sender.Folded) then
@@ -318,6 +567,8 @@ module RelayClient =
         (passphrase: string)
         (self: Identity)
         (trust: PeerInfo -> byte[] -> Result<unit, string>)
+        (acceptCard: Card -> Result<Card, string>)
+        (messagingKeyFor: Handle -> byte[] option)
         (ct: CancellationToken)
         =
         task {
@@ -331,7 +582,7 @@ module RelayClient =
             // This is all the passphrase does now -- SignInAsync replaces it
             // with an agreed key before anything worth reading is said.
             do! Handshake.asJoiner stream (Crypto.deriveKey passphrase) ct
-            let relay = new Relay(stream, self, passphrase, trust)
+            let relay = new Relay(stream, self, passphrase, trust, acceptCard, messagingKeyFor)
             let mutable refused: exn option = None
 
             try

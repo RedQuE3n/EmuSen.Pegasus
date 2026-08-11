@@ -48,6 +48,13 @@
     <Compile Include="Db.fs" />
     <Compile Include="IdentityStore.fs" />
     <Compile Include="KnownPeers.fs" />
+    <!-- Both are stores over the same database and neither knows anything about
+         a socket, so they sit up here with the other stores rather than beside
+         the relay that fills them. Chats after Friends only for readability;
+         they do not reference each other, and deliberately so - forgetting a
+         conversation and removing a buddy are separate acts. -->
+    <Compile Include="Friends.fs" />
+    <Compile Include="Chats.fs" />
     <Compile Include="Servers.fs" />
     <Compile Include="Document.fs" />
     <Compile Include="Store.fs" />
@@ -56,6 +63,12 @@
     <Compile Include="Relay.fs" />
     <Compile Include="Controller.fs" />
     <Compile Include="Buddies.fs" />
+    <!-- After Buddies because Shell wires the two together and this is the
+         window Buddies asks for by callback; before Shell because Shell owns
+         one slot per correspondent. Buddies deliberately does not reference
+         this - it takes a function - so the buddy panel stays testable without
+         a window manager. -->
+    <Compile Include="Chat.fs" />
     <Compile Include="SignIn.fs" />
     <Compile Include="Shell.fs" />
     <Compile Include="Program.fs" />

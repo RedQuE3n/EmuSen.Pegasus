@@ -57,8 +57,16 @@
          (§14), and it is a bump because a licence is the one thing a consumer
          most needs a version to signal and there is no other mechanism for
          signalling it. Protocol stays at 4: a 0.2.x peer and a 0.3.0 peer talk
-         to each other exactly as they did. -->
-    <Version>0.3.0</Version>
+         to each other exactly as they did.
+
+         0.4.0 IS a protocol change, and the first one since 0.2.0. Protocol goes
+         4 to 5: messages, cards, acknowledgements, and — the part that makes it
+         a hard break rather than a tag addition — a new envelope shape. The
+         envelope is what a relay reads holding no key, so a 0.3.0 relay does not
+         merely ignore the new fields, it misreads the frame. A 0.3.0 client and
+         a 0.4.0 client cannot talk, and Hello says so in the first frame rather
+         than letting it be found further down. Pegasus_Sync.md §7. -->
+    <Version>0.4.0</Version>
     <Authors>Tristan Pelland</Authors>
     <Description>Wire types, frame codec, sealed envelope and identity keys shared by Pegasus and Chariot.</Description>
     <!-- MIT as of 0.3.0; 0.2.0-0.2.2 shipped GPL-3.0-or-later and stay that way
@@ -137,6 +145,11 @@
     <Compile Include="Codec.fs" />
     <Compile Include="Crypto.fs" />
     <Compile Include="Identity.fs" />
+    <!-- After Identity because a card is an identity vouching for its own
+         messaging key: it signs with one and agrees with one. It cannot move
+         above Identity, and that the dependency only points one way is what
+         keeps "who you are" separable from "how you are written to". -->
+    <Compile Include="Messaging.fs" />
     <Compile Include="Attestation.fs" />
     <Compile Include="Agreement.fs" />
     <Compile Include="Framing.fs" />

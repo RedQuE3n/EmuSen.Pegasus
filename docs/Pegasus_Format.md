@@ -109,3 +109,45 @@ log would support extracting it later.
 
 No cross-note transactions. Each note is independent, which is why the workspace
 index (`Pegasus_Sync.md` §6) is itself just another note rather than a schema.
+
+## 7. Saved conversations, and why they are in the clear
+
+Messages are saved to the same SQLite database that holds identities, pinned
+peer keys and remembered servers — one row per message, scoped by owner and
+correspondent, **in plaintext**.
+
+That is a decision and not an oversight, so it is stated here rather than left to
+be discovered by somebody who reads "end-to-end encrypted" elsewhere in this
+project and assumes it extends to the disk:
+
+- **Notes are already stored in the clear.** A workspace is a directory of
+  `.pegasus` files anybody with the disk can read (§1). Sealing transcripts while
+  leaving notes open would protect the shorter half of what this program keeps
+  about a person while implying it protected all of it.
+- **The alternative wants the password to stay in memory.** Sealing the log under
+  the identity password means holding that password for the whole session, which
+  is a live secret traded for a partial protection.
+- **What *is* sealed is the key that matters to somebody without your disk**: the
+  messaging private half (`Pegasus_Identity.md` §10). Anyone who has your disk has
+  your notes already.
+
+So the honest statement is: **Pegasus protects your conversations in transit and
+at the relay, and not on your own disk.** Someone who needs the latter wants full
+disk encryption, which the operating system already does better than this program
+could.
+
+Two properties of the table are load-bearing rather than tidy:
+
+- **`PRIMARY KEY (owner, peer, id)` is the deduplication.** Chariot redelivers
+  anything it has not seen acknowledged, so the same message legitimately arrives
+  twice whenever a client dies between reading a delivery and writing it down.
+  `INSERT OR IGNORE` turns the second copy into a no-op instead of a second line
+  in the transcript.
+- **Two clocks, and only one of them orders anything.** `sent_at` is the sender's
+  word and is what is displayed; `received_at` is this machine's and is what the
+  transcript is sorted by. A correspondent whose clock is an hour out — or who
+  lies about it — can mislabel their own lines and cannot reorder yours around
+  them.
+
+Deleting a conversation and removing somebody from the buddy list are separate
+acts on purpose. Tidying a list should not destroy a record nobody asked to lose.

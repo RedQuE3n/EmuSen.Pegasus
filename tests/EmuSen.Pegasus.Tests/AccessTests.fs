@@ -67,13 +67,20 @@ let private findByName (window: Window) (name: string) =
 [<Fact>]
 let ``nothing the keyboard can reach in the main window is unnamed`` () =
     started.Force()
-    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.acceptAny)
+    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.contacts ())
     pad.CreateNote "scratch" |> ignore
 
     let window = laidOut (Shell.PegasusWindow pad)
 
     // The count first, so this cannot pass by finding nothing to check.
-    Assert.Equal(16, (tabStops window).Length)
+    //
+    // 16 until messaging and 20 after it: the buddy panel grew a box to add
+    // somebody by handle, and three buttons — Message, Add, Remove. This number
+    // is SUPPOSED to break when a control is added, which is the whole reason it
+    // is asserted alongside `unnamed` rather than left to it: a guard that only
+    // inspects the controls it finds cannot tell you a new one arrived unnamed,
+    // and it certainly cannot tell you one arrived unreachable.
+    Assert.Equal(20, (tabStops window).Length)
     Assert.Empty(unnamed window)
     window.Close()
 
@@ -93,7 +100,7 @@ let ``nothing the keyboard can reach in the sign-in window is unnamed`` () =
 [<Fact>]
 let ``every text box carries a name as well as its placeholder`` () =
     started.Force()
-    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.acceptAny)
+    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.contacts ())
     pad.CreateNote "scratch" |> ignore
 
     let window = laidOut (Shell.PegasusWindow pad)
@@ -119,7 +126,7 @@ let ``every text box carries a name as well as its placeholder`` () =
 [<Fact>]
 let ``the editor announces which note is open`` () =
     started.Force()
-    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.acceptAny)
+    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.contacts ())
     pad.CreateNote "groceries" |> ignore
 
     let window = laidOut (Shell.PegasusWindow pad)
@@ -130,7 +137,7 @@ let ``the editor announces which note is open`` () =
 [<Fact>]
 let ``the editor renames itself when another note is opened`` () =
     started.Force()
-    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.acceptAny)
+    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.contacts ())
     pad.CreateNote "groceries" |> ignore
     pad.CreateNote "chapter one" |> ignore
 
@@ -162,7 +169,7 @@ let ``the editor renames itself when another note is opened`` () =
 [<Fact>]
 let ``the add button still says plus and announces what it does`` () =
     started.Force()
-    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.acceptAny)
+    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.contacts ())
 
     let window = laidOut (Shell.PegasusWindow pad)
 
@@ -181,7 +188,7 @@ let ``the add button still says plus and announces what it does`` () =
 [<Fact>]
 let ``the status line and the buddy message announce themselves`` () =
     started.Force()
-    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.acceptAny)
+    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.contacts ())
 
     let window = laidOut (Shell.PegasusWindow pad)
 
@@ -202,7 +209,7 @@ let ``the status line and the buddy message announce themselves`` () =
 [<Fact>]
 let ``every list says what it is a list of`` () =
     started.Force()
-    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.acceptAny)
+    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.contacts ())
 
     let window = laidOut (Shell.PegasusWindow pad)
 
@@ -230,7 +237,7 @@ let ``every list says what it is a list of`` () =
 [<Fact>]
 let ``the docked regions do not touch each other or the window frame`` () =
     started.Force()
-    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.acceptAny)
+    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.contacts ())
 
     let window = laidOut (Shell.PegasusWindow pad)
 

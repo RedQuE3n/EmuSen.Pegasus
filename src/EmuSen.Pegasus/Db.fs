@@ -25,8 +25,13 @@ module Db =
     /// migrated for. Stored in SQLite's own user_version pragma rather than a
     /// table of our own, because it costs nothing and is one less thing to
     /// create before it can be read.
+    ///
+    /// 2 is the first bump that is a real migration rather than another CREATE
+    /// TABLE IF NOT EXISTS, and it is the case the comment on openAt below
+    /// predicted: messaging added COLUMNS to two tables that already exist on
+    /// somebody's disk, and a column cannot be added by re-running a create.
     [<Literal>]
-    let SchemaVersion = 1
+    let SchemaVersion = 2
 
     let private schema =
         [ """
@@ -73,20 +78,119 @@ module Db =
               last_used TEXT NOT NULL,
               PRIMARY KEY (owner, host, port)
           )
+          """
+          // The saved buddy list, and it is NOT the roster. The roster is who
+          // is signed in to a relay this second and empties when the connection
+          // drops; this is who you decided to keep, and it survives being
+          // offline, changing servers and reinstalling the program. Presence is
+          // painted onto it by matching handles, which is the arrangement every
+          // messenger since AIM has used and the reason a buddy list can show
+          // somebody as offline at all — you cannot show the absence of
+          // somebody you were not already listing.
+          //
+          // Owner-scoped like known_peers, because two identities on one
+          // machine are two people and one's friends are not the other's.
+          """
+          CREATE TABLE IF NOT EXISTS friends (
+              owner    TEXT NOT NULL,
+              handle   TEXT NOT NULL,
+              display  TEXT NOT NULL,
+              added_at TEXT NOT NULL,
+              PRIMARY KEY (owner, handle)
+          )
+          """
+          // Saved conversations. Plaintext, deliberately, and the reason is
+          // consistency rather than indifference: notes are already stored in
+          // the clear in the workspace, so sealing transcripts here would
+          // protect the shorter half of what this program keeps about you while
+          // claiming to protect it all. What IS sealed is the key that opens
+          // messages in transit (identities.message_secret), which is the thing
+          // an attacker without your disk could otherwise use. Pegasus_Format.md
+          // §7 states the on-disk position plainly so nobody infers a stronger
+          // one from the word "encrypted" elsewhere in this project.
+          //
+          // PRIMARY KEY (owner, peer, id) IS THE DEDUPLICATION, and it is doing
+          // real work rather than being tidy. Chariot redelivers anything it has
+          // not seen an acknowledgement for, so a client that dies between
+          // receiving a message and writing it down is MEANT to be handed that
+          // message again — INSERT OR IGNORE turns the second copy into a
+          // no-op instead of a second line in the transcript.
+          //
+          // Two clocks, on purpose. `sent_at` is the sender's word and is what
+          // is shown; `received_at` is this machine's and is what orders the
+          // list. A correspondent whose clock is an hour out therefore cannot
+          // scramble a transcript, only mislabel their own lines.
+          """
+          CREATE TABLE IF NOT EXISTS messages (
+              owner       TEXT NOT NULL,
+              peer        TEXT NOT NULL,
+              id          TEXT NOT NULL,
+              sent_at     INTEGER NOT NULL,
+              received_at TEXT NOT NULL,
+              outbound    INTEGER NOT NULL,
+              body        TEXT NOT NULL,
+              PRIMARY KEY (owner, peer, id)
+          )
+          """
+          """
+          CREATE INDEX IF NOT EXISTS messages_conversation
+              ON messages (owner, peer, received_at)
           """ ]
+
+    /// Columns added to tables that already exist on somebody's disk.
+    ///
+    /// Kept apart from the schema above because the two are not the same kind
+    /// of statement: everything up there is idempotent by construction, and
+    /// ALTER TABLE ADD COLUMN is not — SQLite raises on a column that is
+    /// already there. Guarding with a lookup rather than swallowing the error
+    /// means a failure here is still a failure, instead of being indistinguish-
+    /// able from the expected case.
+    ///
+    /// All four are nullable, which is what makes the migration safe to run
+    /// against a store somebody has been using: an identity written before
+    /// messaging existed has no messaging key, and NULL is the honest way to say
+    /// so. IdentityStore.unlock is where one gets generated, because that is the
+    /// only moment the password needed to seal it is in hand.
+    let private additions =
+        [ "identities", "message_public", "BLOB"
+          "identities", "message_secret", "BLOB"
+          // The messaging half of a pinned card. Beside the identity key rather
+          // than in a table of its own, because they are pinned together and as
+          // one decision: a card whose identity key is not this one is refused
+          // outright, so storing them apart would invite checking one without
+          // the other.
+          "known_peers", "message_key", "BLOB" ]
 
     let private execute (connection: SqliteConnection) (sql: string) =
         use command = connection.CreateCommand()
         command.CommandText <- sql
         command.ExecuteNonQuery() |> ignore
 
+    /// Whether a table already carries a column, from SQLite's own catalogue.
+    ///
+    /// PRAGMA table_info rather than a query against the column, because asking
+    /// for a column that is not there is an error and "did it throw" is not a
+    /// way to interrogate a schema — it cannot tell a missing column from a
+    /// missing table or a locked file.
+    let private hasColumn (connection: SqliteConnection) (table: string) (column: string) =
+        use command = connection.CreateCommand()
+        command.CommandText <- $"PRAGMA table_info({table})"
+        use reader = command.ExecuteReader()
+        let mutable found = false
+
+        while reader.Read() do
+            if reader.GetString 1 = column then found <- true
+
+        found
+
     /// Opens the database, creating the file and the schema if they are absent.
     ///
-    /// Migration is deliberately the simplest thing that can work: every
-    /// statement is CREATE TABLE IF NOT EXISTS, so opening an existing file and
-    /// creating a new one are the same code path and there is no first-run
-    /// branch to get wrong. When a column has to change, this grows a real
-    /// migration keyed on user_version and SchemaVersion goes up.
+    /// Creating and opening stay ONE code path for everything expressible as
+    /// CREATE TABLE IF NOT EXISTS, which is still most of it, so there is no
+    /// first-run branch to get wrong. The added columns run after those and are
+    /// guarded individually, so a store at version 1 and a store created this
+    /// second end up identical rather than nearly so — the second-commonest
+    /// migration defect after not writing one at all.
     ///
     /// Journal mode is left at the default rather than switched to WAL. These
     /// databases are tiny and single-process, WAL would buy concurrency nothing
@@ -105,6 +209,10 @@ module Db =
 
         for statement in schema do
             execute connection statement
+
+        for table, column, kind in additions do
+            if not (hasColumn connection table column) then
+                execute connection $"ALTER TABLE {table} ADD COLUMN {column} {kind}"
 
         execute connection $"PRAGMA user_version = {SchemaVersion}"
 

@@ -15,7 +15,7 @@ let private ct = CancellationToken.None
 
 [<Fact>]
 let ``both envelopes survive a round trip`` () =
-    for envelope in [ Direct; ToHandle(Handle.Parse "RedQuE3n"); FromHandle(Handle.Parse "RedQuE3n") ] do
+    for envelope in [ Direct; ToHandle(Handle.Parse "RedQuE3n", NoteTraffic); FromHandle(Handle.Parse "RedQuE3n", NoteTraffic, 0L) ] do
         let encoded = Codec.encodeEnvelope envelope
         let decoded, consumed = Codec.decodeEnvelope encoded
         Assert.Equal(envelope, decoded)
@@ -26,7 +26,7 @@ let ``the envelope reports its own length, so the payload can be found`` () =
     // The sealed payload begins immediately after the envelope and nothing
     // separates them, so a decoder that got this count wrong would hand the
     // wrong bytes to AES and the failure would look like a corrupt frame.
-    let envelope = ToHandle(Handle.Parse "RedQuE3n")
+    let envelope = ToHandle(Handle.Parse "RedQuE3n", NoteTraffic)
     let head = Codec.encodeEnvelope envelope
     let payload = "sealed bytes go here"B
     let buffer = Array.append head payload
@@ -40,9 +40,9 @@ let ``to and from are not confused for one another`` () =
     // They carry the same payload and differ only by tag, which is exactly the
     // shape of mistake a decoder makes silently.
     let handle = Handle.Parse "RedQuE3n"
-    Assert.NotEqual<byte[]>(Codec.encodeEnvelope (ToHandle handle), Codec.encodeEnvelope (FromHandle handle))
-    Assert.Equal(ToHandle handle, fst (Codec.decodeEnvelope (Codec.encodeEnvelope (ToHandle handle))))
-    Assert.Equal(FromHandle handle, fst (Codec.decodeEnvelope (Codec.encodeEnvelope (FromHandle handle))))
+    Assert.NotEqual<byte[]>(Codec.encodeEnvelope (ToHandle(handle, NoteTraffic)), Codec.encodeEnvelope (FromHandle(handle, NoteTraffic, 0L)))
+    Assert.Equal(ToHandle(handle, NoteTraffic), fst (Codec.decodeEnvelope (Codec.encodeEnvelope (ToHandle(handle, NoteTraffic)))))
+    Assert.Equal(FromHandle(handle, NoteTraffic, 0L), fst (Codec.decodeEnvelope (Codec.encodeEnvelope (FromHandle(handle, NoteTraffic, 0L)))))
 
 [<Fact>]
 let ``an unknown envelope tag is refused rather than guessed at`` () =
@@ -80,7 +80,7 @@ let ``a frame survives the wire with its envelope`` () =
     let key = Crypto.deriveKey "7-lantern-quartz"
     let sent = Update [| 1uy; 2uy; 3uy |]
 
-    for envelope in [ Direct; ToHandle(Handle.Parse "RedQuE3n"); FromHandle(Handle.Parse "RedQuE3n") ] do
+    for envelope in [ Direct; ToHandle(Handle.Parse "RedQuE3n", NoteTraffic); FromHandle(Handle.Parse "RedQuE3n", NoteTraffic, 0L) ] do
         let gotEnvelope, gotFrame = roundTrip envelope sent key
         Assert.Equal(envelope, gotEnvelope)
         Assert.Equal(sent, gotFrame)
@@ -93,7 +93,7 @@ let ``a relay reads the destination and cannot read the payload`` () =
     // end-to-end property is gone and Chariot_Design.md §1 is a lie.
     let key = Crypto.deriveKey "7-lantern-quartz"
     let secret = Update(Encoding.UTF8.GetBytes "the contents of somebody's note")
-    let destination = ToHandle(Handle.Parse "RedQuE3n")
+    let destination = ToHandle(Handle.Parse "RedQuE3n", NoteTraffic)
 
     use stream = new MemoryStream()
     Framing.writeFrame stream key destination secret ct |> _.GetAwaiter().GetResult()
@@ -120,11 +120,11 @@ let ``a relay can forward a payload it never opened`` () =
     let sent = Update(Encoding.UTF8.GetBytes "carried, not read")
 
     use inbound = new MemoryStream()
-    Framing.writeFrame inbound key (ToHandle(Handle.Parse "RedQuE3n")) sent ct |> _.GetAwaiter().GetResult()
+    Framing.writeFrame inbound key (ToHandle(Handle.Parse "RedQuE3n", NoteTraffic)) sent ct |> _.GetAwaiter().GetResult()
     inbound.Position <- 0L
 
     let envelope, sealedBytes = Framing.readSealed inbound ct |> _.GetAwaiter().GetResult()
-    Assert.Equal(ToHandle(Handle.Parse "RedQuE3n"), envelope)
+    Assert.Equal(ToHandle(Handle.Parse "RedQuE3n", NoteTraffic), envelope)
 
     // The relay rewrites the destination to Direct on delivery: the recipient
     // is the destination, so there is nothing left to route.
@@ -179,7 +179,7 @@ let ``a routed frame is refused on a direct peer connection`` () =
             do! client.ConnectAsync("127.0.0.1", host.Port)
             let stream = client.GetStream()
             do! Handshake.asJoiner stream key ct
-            do! Framing.writeFrame stream key (ToHandle(Handle.Parse "elsewhere")) Bye ct
+            do! Framing.writeFrame stream key (ToHandle(Handle.Parse "elsewhere", NoteTraffic)) Bye ct
             return client
         }
 

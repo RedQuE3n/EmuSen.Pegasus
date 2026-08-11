@@ -13,7 +13,7 @@ open EmuSen.Pegasus.Tests.Stubs
 [<Fact>]
 let ``the window renders an editor bound to the open note`` () =
     started.Force()
-    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.acceptAny)
+    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.contacts ())
     pad.CreateNote "scratch" |> ignore
 
     let window = Shell.PegasusWindow pad
@@ -34,7 +34,7 @@ let ``every control in the window is actually templated`` () =
     // passed. Applying a template is the thing that was missing, so it is the
     // thing asserted. See Pegasus_Design.md §11.
     started.Force()
-    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.acceptAny)
+    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.contacts ())
     pad.CreateNote "scratch" |> ignore
 
     let window = Shell.PegasusWindow pad
@@ -55,7 +55,7 @@ let ``the window is a LunaP ToolWindow and carries a placement key`` () =
     // The point of the move: chrome, theme and geometry come from the shared
     // toolkit rather than being rebuilt here. Pegasus_Design.md §8.
     started.Force()
-    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.acceptAny)
+    use pad = new Notepad(tempRoot (), Peers.identity "alice", Peers.contacts ())
     pad.CreateNote "scratch" |> ignore
     let window = Shell.PegasusWindow pad
     Assert.IsAssignableFrom<EmuSen.LunaP.Windowing.ToolWindow>(window) |> ignore
@@ -65,8 +65,8 @@ let ``the window is a LunaP ToolWindow and carries a placement key`` () =
 [<Fact>]
 let ``a remote edit appears in the rendered editor`` () =
     started.Force()
-    use hostPad = new Notepad(tempRoot (), Peers.identity "alice", Peers.acceptAny)
-    use joinPad = new Notepad(tempRoot (), Peers.identity "bob", Peers.acceptAny)
+    use hostPad = new Notepad(tempRoot (), Peers.identity "alice", Peers.contacts ())
+    use joinPad = new Notepad(tempRoot (), Peers.identity "bob", Peers.contacts ())
     hostPad.CreateNote "shared" |> ignore
     joinPad.CreateNote "shared" |> ignore
 
@@ -94,13 +94,13 @@ let ``a note survives closing and reopening the notepad`` () =
     let root = tempRoot ()
 
     let noteId =
-        use pad = new Notepad(root, Peers.identity "alice", Peers.acceptAny)
+        use pad = new Notepad(root, Peers.identity "alice", Peers.contacts ())
         let entry = pad.CreateNote "durable"
         pad.Edit "this must still be here"
         pad.Checkpoint()
         entry.Id
 
-    use reopened = new Notepad(root, Peers.identity "alice", Peers.acceptAny)
+    use reopened = new Notepad(root, Peers.identity "alice", Peers.contacts ())
     reopened.Open noteId
     Assert.Equal("this must still be here", reopened.Text)
     Assert.Contains(reopened.Notes, fun n -> n.Name = "durable")
@@ -114,8 +114,8 @@ let ``opening another note drops the connection rather than the document under i
     // conversation now outlives a moment of interest in one note. Disconnecting
     // is visible and recoverable. The alternative was not.
     started.Force()
-    use hostPad = new Notepad(tempRoot (), Peers.identity "alice", Peers.acceptAny)
-    use joinPad = new Notepad(tempRoot (), Peers.identity "bob", Peers.acceptAny)
+    use hostPad = new Notepad(tempRoot (), Peers.identity "alice", Peers.contacts ())
+    use joinPad = new Notepad(tempRoot (), Peers.identity "bob", Peers.contacts ())
     let first = hostPad.CreateNote "first"
     let second = hostPad.CreateNote "second"
     joinPad.CreateNote "shared" |> ignore
@@ -169,8 +169,8 @@ let ``the buddy list fills with whoever else is signed in`` () =
 
     use aliceId = Peers.identity "alice"
     use bobId = Peers.identity "bob"
-    use alicePad = new Notepad(tempRoot (), aliceId, Peers.acceptAny)
-    use bobPad = new Notepad(tempRoot (), bobId, Peers.acceptAny)
+    use alicePad = new Notepad(tempRoot (), aliceId, Peers.contacts ())
+    use bobPad = new Notepad(tempRoot (), bobId, Peers.contacts ())
     alicePad.CreateNote "shared" |> ignore
     bobPad.CreateNote "shared" |> ignore
 
@@ -182,8 +182,17 @@ let ``the buddy list fills with whoever else is signed in`` () =
     bobPad.SignInToRelay("127.0.0.1", relay.Port, Passphrase) |> ignore
 
     // What the window shows, not what the controller believes.
+    //
+    // CONTAINS RATHER THAN EQUALS, and the row it checks now says more than a
+    // name. Bob is signed in and is not on Alice's list, so the row carries a
+    // presence mark and says so in words: the panel shows friends and strangers
+    // in one list, and a stranger that read identically to a friend would make
+    // the Add button meaningless. Asserting the exact string would pin this test
+    // to the wording of a label rather than to the behaviour it is about.
     Assert.True(pump (fun () -> window.Buddies.Roster.ItemCount = 1), "the buddy list never filled")
-    Assert.Equal("bob", string window.Buddies.Roster.Items[0])
+    let row = string window.Buddies.Roster.Items[0]
+    Assert.Contains("bob", row)
+    Assert.Contains("not on your list", row)
 
     alicePad.Disconnect()
     bobPad.Disconnect()
@@ -202,8 +211,8 @@ let ``a note is opened with somebody by name, with no address and no port`` () =
 
     use aliceId = Peers.identity "alice"
     use bobId = Peers.identity "bob"
-    use alicePad = new Notepad(tempRoot (), aliceId, Peers.acceptAny)
-    use bobPad = new Notepad(tempRoot (), bobId, Peers.acceptAny)
+    use alicePad = new Notepad(tempRoot (), aliceId, Peers.contacts ())
+    use bobPad = new Notepad(tempRoot (), bobId, Peers.contacts ())
     alicePad.CreateNote "shared" |> ignore
     bobPad.CreateNote "shared" |> ignore
 
@@ -248,7 +257,7 @@ let ``a server is remembered only once it has actually worked`` () =
           Remember = remembered.Add }
 
     use aliceId = Peers.identity "alice"
-    use alicePad = new Notepad(tempRoot (), aliceId, Peers.acceptAny)
+    use alicePad = new Notepad(tempRoot (), aliceId, Peers.contacts ())
     alicePad.CreateNote "shared" |> ignore
 
     let window = Shell.PegasusWindow(alicePad, book)
@@ -280,7 +289,7 @@ let ``a remembered server is offered back without its passphrase`` () =
           Remember = ignore }
 
     use aliceId = Peers.identity "alice"
-    use alicePad = new Notepad(tempRoot (), aliceId, Peers.acceptAny)
+    use alicePad = new Notepad(tempRoot (), aliceId, Peers.contacts ())
     alicePad.CreateNote "shared" |> ignore
 
     let window = Shell.PegasusWindow(alicePad, book)

@@ -382,3 +382,100 @@ described it as a map, which the implementation never was.
 
 Deletion tombstones the index entry and leaves the file on disk. Nothing the user
 authored is removed by the application.
+
+## 7. Messages, and why protocol 5 is a hard break
+
+Protocol 5 adds a second kind of traffic. Notes are unchanged, frame for frame,
+and everything §1 to §6 says about them still holds.
+
+**This is not a tag-only bump and an older build cannot be talked round.** Every
+previous protocol change added frames, and a frame tag an old build does not know
+is a frame it can refuse cleanly. This one changed the **envelope** — a routed
+frame now names which channel it is on, and a delivery names the mailbox row it
+came out of — and the envelope is the one part of a frame a relay reads while
+holding no key at all. A protocol-4 relay handed a protocol-5 envelope reads the
+handle it expects and then finds bytes it has no field for. `Hello` says 5 in the
+first frame, which is what turns that into a refusal instead of a decode failure
+three frames later.
+
+The frames added: `Card`, `Ask`, `Unknown`, `Message`, `Ack`, `Undeliverable`.
+Of these only `Message` is ever sealed end to end; the rest are control traffic
+between a client and its relay and travel under the agreed session key of §4.3.
+
+### 7.1 A message needs no join code
+
+A note is sealed under a key derived from a code both people typed. That is a
+pre-shared key, §5 is honest about what it is and is not, and **it cannot work
+for a message**, for a reason that has nothing to do with its strength: a message
+has to be sealed for somebody who is *asleep*. There is nobody at the far end to
+agree anything with, and asking two people to agree a password before they can
+say hello is not an instant messenger — it is a shared notepad with a chat box in
+it.
+
+So the recipient's key has to be knowable in advance, which means published,
+which is what a `Card` is: an identity's messaging public key, signed by its
+identity key, served by the relay to whoever asks (`Chariot_Design.md` §14).
+
+The user-visible consequence is that one window now contains two different
+pairing stories, and the buddy panel says so in words rather than leaving it to
+be inferred: **a message needs no code; a shared note still does.** Somebody who
+learned the join code rule from §2 and then found they could message a buddy
+without one would reasonably conclude the code had stopped mattering. It has not.
+
+### 7.2 Two agreements, and what each one buys
+
+A message body is sealed with AES-256-GCM under a key derived from **two**
+Diffie-Hellman agreements hashed together:
+
+    H1 = ECDH(ephemeral_sender, messaging_recipient)
+    H2 = ECDH(messaging_sender,  messaging_recipient)
+    K  = SHA-256(domain || salt || H1 || H2)
+
+with the ephemeral public key sent in the clear beside the body, and the salt
+carrying that ephemeral key and both parties' messaging keys so a ciphertext is
+bound to the exact pair it was written for.
+
+Each half buys one property and removing either takes it away:
+
+- **H1 is why a recording does not stay readable.** The ephemeral private half is
+  generated per message and stored nowhere, so somebody who later steals the
+  *sender's* disk cannot recompute K for anything already sent.
+- **H2 is why the sender is the sender.** Only a holder of the sender's messaging
+  private key can compute it. Without it, anybody who knows the recipient's
+  published key — which is everybody, that is what published means — could seal a
+  message and let the relay's `FromHandle` stamp name whoever they liked. That
+  stamp is the relay's word and never proof (`Types.fs`); H2 is the proof.
+
+**A signature over the body was the obvious alternative and was rejected.** It
+would have authenticated the sender more simply, and it would have made every
+message a transferable proof that a named person said a specific thing — which a
+private conversation should not manufacture as a side effect. H2 authenticates to
+the *recipient* and to nobody else, because the recipient could have computed the
+same key itself and therefore could have written the message. That is the same
+deniability property Signal's design goes to trouble to keep, obtained here for
+one extra ECDH.
+
+This is X3DH with the parts that need a server-held pool of one-time prekeys left
+out.
+
+### 7.3 What this does not buy
+
+Stated in the same shape as §5, because "encrypted so only the recipient can read
+it" is the kind of sentence that grows in the retelling:
+
+- **No post-compromise security.** The recipient's messaging key never rotates on
+  its own, so stealing it opens every message ever sealed to it, past and future.
+  A ratchet is what fixes that and there is no ratchet here.
+- **Forward secrecy is one-sided.** H1 protects against the sender being
+  compromised later. It does nothing about the recipient's key, which is the
+  other half of every agreement.
+- **No protection against a relay that lied about the first card.** Trust on
+  first use has a first use (`Pegasus_Identity.md` §7).
+- **The metadata is worse than the notes', not better.** Chariot learns who
+  messages whom, when, how much, and now also *that it was a message rather than
+  a note edit*. It does not learn content. Anyone who needs the routing itself
+  hidden wants an onion router and should be told so.
+
+What it does buy, plainly: a relay operator holding the database and the
+passphrase, or an attacker who has taken both, has ciphertext and a social graph.
+Nothing in a queued message opens for them.

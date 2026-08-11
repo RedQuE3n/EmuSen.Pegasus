@@ -179,6 +179,37 @@ type Conversation(send: Frame -> Threading.Tasks.Task<unit>, self: Identity, doc
                 // and a peer proposing one is proposing a key that a relay
                 // between us could have chosen. Pegasus_Sync.md §4.3.
                 raise (ProtocolError "a peer proposed a key agreement")
+
+            | Card _
+            | Ask _
+            | Unknown _
+            | Ack _
+            | Undeliverable _ ->
+                // The messaging control frames, and every one of them is a
+                // question for a relay rather than for a person: publish my
+                // card, look somebody up, forget this post, this did not go
+                // anywhere. There is no directory on a direct socket and no
+                // mailbox behind it, so a peer sending one is either confused or
+                // probing. Refused by name rather than ignored, because
+                // silently dropping a frame is how a protocol mismatch becomes
+                // an afternoon of debugging. Pegasus_Sync.md §7.
+                raise (ProtocolError "a peer sent a relay control frame on a direct connection")
+
+            | Message _ ->
+                // Refused DELIBERATELY, and it is the one refusal here somebody
+                // might reasonably want to argue with: two people on a socket
+                // could plainly exchange messages, and this says no.
+                //
+                // The reason is that a message means something a direct socket
+                // cannot provide. It is sealed to a published card, stored until
+                // it is acknowledged, and deduplicated by id across
+                // redeliveries — a mailbox and a directory, neither of which
+                // exists between two peers on a wire. Accepting one here would
+                // deliver a message that was never stored anywhere, with none of
+                // the guarantees §7 says a message has, and it would look
+                // identical to the real thing until the connection dropped
+                // mid-sentence. Pegasus_Sync.md §7.1.
+                raise (ProtocolError "messages travel through a relay, not over a direct note connection")
         }
 
     interface IDisposable with
