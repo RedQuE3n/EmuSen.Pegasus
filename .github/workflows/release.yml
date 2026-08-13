@@ -42,6 +42,33 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      # THE CALENDAR, MADE EXECUTABLE. §15.4 concluded that a retired runner
+      # image is catchable only by "a human reading the run, or a date in a
+      # calendar". The watchdog below is the first of those made mechanical; this
+      # is the second, and it is the cheaper one because it fires BEFORE a tag
+      # burns rather than after.
+      #
+      # macos-15-intel is the last x86_64 image Actions will offer and is
+      # announced for removal in August 2027. The date here is deliberately
+      # earlier, so this fails while there is still time to decide what osx-x64
+      # becomes, rather than on the morning it stops building.
+      #
+      # WHEN THIS FAILS, the fix is NOT to move the date. It is to check what
+      # macos-15-intel is doing now and change the matrix - then move the date to
+      # the next thing worth re-reading. A date pushed forward without looking is
+      # this guard deleted with extra steps.
+      - name: The pinned runner images have not expired
+        run: |
+          REVIEW_BY=2027-06-01
+          TODAY=$(date -u +%F)
+          if [ "$TODAY" \> "$REVIEW_BY" ]; then
+            echo "::error::Past $REVIEW_BY: re-read the runner image pins before releasing."
+            echo "::error::macos-15-intel was announced for removal in August 2027 and is the last x86_64 image."
+            echo "::error::A retired label does not fail, it queues - see Pegasus_Design.md 15.4."
+            exit 1
+          fi
+          echo "$TODAY is before $REVIEW_BY; pins not yet due for review"
+
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
@@ -209,8 +236,100 @@ jobs:
             *.zip
           if-no-files-found: error
 
+  # Turns a job that never STARTS into a red one, which is the gap §15.5 left
+  # open and §15.4 said this file had no way to ask for.
+  #
+  # THE SIGNAL IS A SIBLING, not a clock. Ordinary runner contention queues every
+  # build job together, and waiting ten minutes for a busy macOS runner is normal
+  # and must not fail a release. What is NOT normal is one matrix job still
+  # unscheduled long after another has finished: that is what a retired label
+  # looks like from the outside, and it is exactly the shape of the 0.2.0 failure
+  # - test green, three builds green, osx-x64 queued forever.
+  #
+  # Verified by sabotage before being trusted, on a branch, with a job pinned to
+  # `ubuntu-does-not-exist`: it queued, its sibling finished, and this fired at
+  # 124s against a 120s grace, naming the stuck job in three ::error:: lines.
+  # §15.7 records what the run concluded as, which is not what you would guess.
+  watchdog:
+    needs: test
+    runs-on: ubuntu-latest
+
+    # Longer than the build ceiling it is watching (20) plus the grace below
+    # (15), or it would time out mid-vigil and prove nothing.
+    timeout-minutes: 45
+
+    steps:
+      - name: Fail if a build job never starts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          # Fifteen minutes after a SIBLING finished, not fifteen minutes of
+          # queueing. A cold macOS runner is slow to come up; a dead label never
+          # comes up at all, and only the second one outlives a finished sibling.
+          GRACE_SECONDS: '900'
+        run: |
+          set -uo pipefail
+
+          while :; do
+            JOBS=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate \
+              -q '.jobs[] | select(.name | startswith("build")) | "\(.status)\t\(.completed_at // "")\t\(.name)"')
+
+            QUEUED=$(printf '%s\n' "$JOBS" | awk -F'\t' '$1=="queued" && $3!="" {print $3}')
+            DONE=$(printf '%s\n' "$JOBS" | awk -F'\t' '$1=="completed" {print $2}' | sort | tail -1)
+
+            if [ -z "$QUEUED" ]; then
+              UNFINISHED=$(printf '%s\n' "$JOBS" | awk -F'\t' '$1!="completed" && $3!="" {print $3}')
+              if [ -z "$UNFINISHED" ]; then
+                echo "every build job started and finished"
+                exit 0
+              fi
+              echo "nothing queued; still building"
+              sleep 30
+              continue
+            fi
+
+            if [ -n "$DONE" ]; then
+              AGE=$(( $(date -u +%s) - $(date -u -d "$DONE" +%s) ))
+              echo "queued: $(echo $QUEUED | tr '\n' ' ') | a sibling finished ${AGE}s ago"
+
+              if [ "$AGE" -ge "$GRACE_SECONDS" ]; then
+                echo "::error::A build job has not STARTED ${AGE}s after a sibling finished."
+                echo "::error::This is what a retired runner image looks like: not an error, a job nobody schedules. See Pegasus_Design.md 15.4 and 15.7."
+                echo "::error::Still queued: $(echo $QUEUED | tr '\n' ' ')"
+                exit 1
+              fi
+            else
+              echo "queued: $(echo $QUEUED | tr '\n' ' ') | no sibling has finished yet"
+            fi
+
+            sleep 30
+          done
+
+  # A job that never starts never settles, so the run would sit in_progress for
+  # 24 hours with the diagnosis already written above it. Cancelling is the only
+  # way to end it, and it runs SEPARATELY so the watchdog is recorded as a
+  # failure rather than being killed mid-sentence by its own cancel - measured,
+  # §15.7. That failed job is what tells a reader this was not a person pressing
+  # the button.
+  rescue:
+    needs: watchdog
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    permissions:
+      actions: write
+
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "the watchdog failed; ending the run rather than leaving it queued"
+          gh run cancel "${{ github.run_id }}" -R "${{ github.repository }}" || true
+
   release:
-    needs: build
+    needs: [build, watchdog]
     runs-on: ubuntu-latest
 
     # Downloads four archives, checksums them and calls gh once. Ten minutes is

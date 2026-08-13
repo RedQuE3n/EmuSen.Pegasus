@@ -1154,3 +1154,70 @@ wrong:
 green in 2 seconds after, 179 tests both times. This is recorded as a trap
 removed rather than a bug fixed, and the distinction is worth keeping: no claim
 is being made that anything stalled, only that if it ever does, it will say so.
+
+### 15.7 Closing §15.4: a job that never starts, made red
+
+§15.5 left this open and §15.4 said the file had no way to ask for it: a retired
+runner image does not fail, it queues, and a ceiling cannot bound a job whose
+clock never starts. It is closable, but not by a timeout — by watching.
+
+**The signal is a sibling, not a clock.** Ordinary contention queues every build
+job together, and waiting on a busy macOS runner is normal; failing a release for
+it would be worse than the disease. What is not normal is one matrix job still
+unscheduled long after another has *finished*. That is the exact shape of the
+0.2.0 run — `test` green, three builds green, `osx-x64` queued indefinitely — and
+nothing else produces it. So the watchdog polls
+`/actions/runs/{id}/jobs`, which reports `status: queued` for a job that has
+never started, and fails when a queued build outlives a finished sibling by
+fifteen minutes.
+
+#### What the sabotage measured
+
+Run on a branch, with a matrix job pinned to `ubuntu-does-not-exist` — which is
+what a retired label is, an ordinary string that matches no runner. Grace
+shortened to 120s so the experiment took minutes.
+
+| | result |
+|---|---|
+| sibling on `ubuntu-latest` | completed, success |
+| job on `ubuntu-does-not-exist` | never started, `queued` throughout |
+| watchdog fired at | **124s**, naming the stuck job in three `::error::` lines |
+| time to resolution | **~3 minutes**, against 24 hours of silence |
+
+**The run concludes as `cancelled`, not `failure`, and that is not what you would
+guess.** Cancelling is the only way to end a run holding a job that will never
+settle, and a cancelled run is a cancelled run whoever asked for it. The first
+attempt made this worse: cancelling from inside the watchdog killed the watchdog
+mid-sentence, so the job that had just diagnosed the problem was recorded as
+`cancelled` too, and the run was indistinguishable from somebody pressing the
+button.
+
+Splitting the cancel into a `rescue` job that runs `if: failure()` after the
+watchdog fixes the part that matters. Measured, second run:
+
+| job | conclusion |
+|---|---|
+| `watchdog` | **failure** |
+| `rescue` | cancelled (it cancelled the run it was in) |
+| run | cancelled |
+
+So the durable evidence is the **failed watchdog job**, not the run's conclusion.
+A person pressing cancel never leaves one behind. That is the thing to look at,
+and the three `::error::` annotations say which job never started and why.
+
+#### What is still not closed
+
+- **The run's conclusion is still ambiguous at a glance.** Only opening it
+  distinguishes a watchdog cancel from a human one. Nothing in Actions offers a
+  way to conclude a run as failed while a job is still queued.
+- **The watchdog costs a runner for as long as the build takes**, since it polls
+  until every build job finishes. On this suite that is a couple of minutes.
+- **It cannot see a label that is retired between the tag and the build**, which
+  is the same instant-of-use gap every check has, and is not worth chasing.
+
+The other half is now mechanical too: the `test` job checks a **review date** and
+fails the release past it, so "a date in a calendar" is a date in the repository.
+`macos-15-intel` is announced for removal in August 2027 and the date is set
+earlier, at 2027-06-01, to fail while there is still a decision to make. When it
+fires, moving the date is the wrong fix — the point is to re-read the pins and
+then move it to the next thing worth re-reading.
