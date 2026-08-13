@@ -36,6 +36,11 @@ jobs:
   # turn one red test into four confusing ones.
   test:
     runs-on: ubuntu-latest
+
+    # The gate on the whole release, so a hang here holds four platforms and the
+    # release job behind it. ci.yml carries the argument for the number.
+    timeout-minutes: 10
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -78,6 +83,24 @@ jobs:
             os: windows-latest
 
     runs-on: ${{ matrix.os }}
+
+    # Twenty rather than ten, and the difference is not slack: this job runs a
+    # self-contained single-file publish on a runner image it does not share with
+    # the others, and a cold macOS or Windows runner is several times a warm
+    # Linux one. It is still an order of magnitude above a normal build.
+    #
+    # WHAT THIS DOES NOT COVER, so nobody reads more into it than is there: the
+    # failure §15.4 records is a job that never STARTED. `macos-13` was retired,
+    # the label matched no runner, and the job queued indefinitely while the
+    # other three went green. A ceiling bounds a job that runs too long; it does
+    # not bound one that is never scheduled, because the clock starts when the
+    # job starts. §15.4's conclusion stands unchanged - a queued job is still
+    # only visible to a human reading the run or a date in a calendar - and this
+    # line is not the fix for it.
+    #
+    # What it does cover is the other shape: a job that starts and then wedges,
+    # which is what cost Chariot two releases (Chariot_Design.md §15.1).
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -189,6 +212,10 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+
+    # Downloads four archives, checksums them and calls gh once. Ten minutes is
+    # already absurd for that, which is the point of a backstop.
+    timeout-minutes: 10
 
     permissions:
       # gh release create writes to this repository. Nothing else here does.

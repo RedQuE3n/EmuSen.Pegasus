@@ -36,6 +36,15 @@ jobs:
   publish:
     runs-on: ubuntu-latest
 
+    # The ceiling matters more here than anywhere else in this repository,
+    # because the `dotnet test` below stands between a package and nuget.org and
+    # a push cannot be taken back. A hang in that step is the safe direction to
+    # fail - nothing is published - but it is indistinguishable from a slow
+    # runner for six hours, and the version sits half-released while somebody
+    # waits. Fifteen rather than ten: this job also packs, inspects the .nupkg
+    # and exchanges an OIDC token after the suite. ci.yml carries the argument.
+    timeout-minutes: 15
+
     permissions:
       # The whole mechanism. Without id-token: write the job cannot ask GitHub
       # for the token nuget.org wants, and the exchange fails with a bare 401.

@@ -1089,3 +1089,68 @@ Three things in that are worth keeping.
 **There is now a date this repository has to meet.** `macos-15-intel` is the **last x86_64 image GitHub Actions will offer, and it goes away in August 2027.** Apple has discontinued the architecture and Actions follows it. After that, `osx-x64` cannot be built on Intel hardware here at all, and the choice will be to cross-compile it from an Apple Silicon runner — which is a real option and would need this section's honesty about what "built on a Mac" then means — or to stop shipping it. It is written down because a runner image with a known end date is exactly the kind of thing that is remembered right up until the release it breaks.
 
 Chariot took the identical defect from the identical file on the same day, and `Chariot_Design.md` §12.3 records it there.
+
+### 15.5 A ceiling on every job, and the one failure it does not catch
+
+Every job in this repository ran with GitHub's default timeout of **360
+minutes**. For a suite that finishes in **2 seconds** and a release that finishes
+in **2m23s**, that is not a limit; it is an afternoon that nobody is watching.
+
+The reason to fix it now is that the cost has already been paid next door.
+Chariot's release job blocked for **10m20s** on a socket read that could not time
+out, was killed by hand, and burned a version number — twice, because a hang
+looks exactly like a slow runner from the outside and gets diagnosed as one
+(`Chariot_Design.md` §15.1). Nothing about that was specific to Chariot. This
+suite drives real loopback sockets too.
+
+So: `timeout-minutes` on all five job definitions — 10 on the two `test` jobs and the
+`release` job, 15 on `publish`, which packs and inspects a `.nupkg` and exchanges
+an OIDC token after the suite, and 20 on the build matrix, where a cold macOS or
+Windows runner is several times a warm Linux one. Each is roughly an order of
+magnitude above what a green run needs, which is the property that matters: a
+ceiling that can only ever be hit by a genuine hang never has to be argued about,
+and raising it is always the wrong response to it firing.
+
+**What this does not catch, stated because §15.4 is directly above it and the two
+look like the same thing.** The failure that spent 0.2.0 was a job that never
+*started*: `macos-13` had been retired, the label matched no runner, and the job
+queued indefinitely while the other three went green. A ceiling bounds a job that
+runs too long. The clock starts when the job starts, so a job that is never
+scheduled is never bounded by it. §15.4's conclusion is unchanged and its "this
+file has no way to ask for that" is still true — a queued job is visible only to
+a person reading the run, or to a date in a calendar. These two sections describe
+adjacent failures with different fixes, and only one of them now has one.
+
+### 15.6 The trap removed from `NetTests` before it was sprung
+
+Chariot's hang was a harness defect, not a server one, and the harness pattern
+that caused it exists here: a call that blocks the test thread inside
+`.GetAwaiter().GetResult()` while passing `CancellationToken.None`.
+
+`waitFor` — polling a condition against a deadline — is the right shape and is
+most of this suite. It cannot hang: the thing either happens or the assertion
+fails in five seconds with a name. The exceptions were `Host.AcceptAsync` and
+`Client.connectAsync` in `NetTests`, which are awaited synchronously so a `Pair`
+is fully connected before a test body runs. With `CancellationToken.None`, a
+handshake that stalled would have blocked there forever, and **no deadline
+outside a blocking call can rescue it — the deadline has to be on the call.**
+Both already take a token, so this was passing a real one rather than a redesign.
+
+Two things deliberately left alone, because a blanket sweep would have been
+wrong:
+
+- **`EnvelopeTests`** passes `CancellationToken.None` throughout and keeps it.
+  Every stream there is a `MemoryStream`, and a `MemoryStream` read returns
+  immediately or not at all — there is no socket to go quiet. A token would be
+  ceremony with nothing behind it.
+- **`Stubs`** keeps its `CancellationToken.None` too. That token is the stub
+  relay's *lifetime*, not a per-read deadline, and its reads run on background
+  tasks — a stall there surfaces as a `waitFor` assertion failing in the test,
+  which is already a named failure. Giving a lifetime token a 20-second ceiling
+  would mean a stub relay that stops serving mid-test for no reason, which is a
+  new defect traded for an absent one.
+
+**Nothing here was failing.** The suite was green in 2 seconds before this and is
+green in 2 seconds after, 179 tests both times. This is recorded as a trap
+removed rather than a bug fixed, and the distinction is worth keeping: no claim
+is being made that anything stalled, only that if it ever does, it will say so.

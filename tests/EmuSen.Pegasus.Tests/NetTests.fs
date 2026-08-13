@@ -19,6 +19,29 @@ let private waitFor (timeoutMs: int) (condition: unit -> bool) =
 
     condition ()
 
+/// A token with a hard ceiling, for the calls below that block the TEST THREAD.
+///
+/// `waitFor` above is the right shape and is not what this is for: it polls a
+/// condition and gives up, so a thing that never happens fails in five seconds
+/// with an assertion attached. The connect and accept below are the other shape
+/// — they block the thread inside `.GetAwaiter().GetResult()`, and with
+/// `CancellationToken.None` a handshake that stalls blocks there forever. No
+/// deadline outside a blocking call can rescue it; the deadline has to be on the
+/// call.
+///
+/// Chariot's suite had exactly this and it cost two releases: a read waiting on
+/// a frame the server had stopped sending hung `dotnet test` for 10m20s in CI
+/// and reported nothing, which read as a slow runner rather than a defect
+/// (Chariot_Design.md §15.1). Nothing here is known to stall today — this suite
+/// is green in 2 seconds — so this is a trap being removed before it is sprung,
+/// not a bug being fixed.
+///
+/// Twenty seconds is ten times the whole suite's runtime on purpose. It is a
+/// ceiling that turns a hang into a named failure, not a latency budget, and it
+/// is never the thing that legitimately fails a test.
+let private bounded () =
+    (new CancellationTokenSource(TimeSpan.FromSeconds 20.0)).Token
+
 /// Brings up a host and a joiner on loopback, both pumping. No window, no
 /// second process -- the discipline described in Pegasus_Design.md §5.
 type private Pair() =
@@ -30,10 +53,10 @@ type private Pair() =
     let host = new Host(0, code, aliceInfo, alice, Peers.acceptAny)
     do host.Start()
 
-    let accepted = host.AcceptAsync CancellationToken.None
+    let accepted = host.AcceptAsync (bounded ())
 
     let joiner =
-        (Client.connectAsync "127.0.0.1" host.Port code bobInfo bob Peers.acceptAny CancellationToken.None)
+        (Client.connectAsync "127.0.0.1" host.Port code bobInfo bob Peers.acceptAny (bounded ()))
             .GetAwaiter()
             .GetResult()
 
@@ -85,10 +108,10 @@ let ``a peer that connects late receives the existing document`` () =
     use aliceId = Peers.identity "alice"
     use host = new Host(0, code, aliceId, alice, Peers.acceptAny)
     host.Start()
-    let accepted = host.AcceptAsync CancellationToken.None
+    let accepted = host.AcceptAsync (bounded ())
 
     use joiner =
-        (Client.connectAsync "127.0.0.1" host.Port code (Peers.identity "bob") bob Peers.acceptAny CancellationToken.None)
+        (Client.connectAsync "127.0.0.1" host.Port code (Peers.identity "bob") bob Peers.acceptAny (bounded ()))
             .GetAwaiter()
             .GetResult()
 
@@ -141,10 +164,10 @@ let ``a wrong join code is refused at the handshake`` () =
     use aliceId = Peers.identity "alice"
     use host = new Host(0, "7-lantern-quartz", aliceId, alice, Peers.acceptAny)
     host.Start()
-    let accepted = host.AcceptAsync CancellationToken.None
+    let accepted = host.AcceptAsync (bounded ())
 
     let connecting =
-        Client.connectAsync "127.0.0.1" host.Port "7-lantern-cobalt" (Peers.identity "bob") bob Peers.acceptAny CancellationToken.None
+        Client.connectAsync "127.0.0.1" host.Port "7-lantern-cobalt" (Peers.identity "bob") bob Peers.acceptAny (bounded ())
 
     // The joiner answers the challenge wrongly, so the host rejects it. The
     // joiner itself cannot tell yet -- it learns when the stream closes.
@@ -189,10 +212,10 @@ let ``a peer whose key is not the pinned one is refused`` () =
     let code = Crypto.newJoinCode ()
     use host = new Host(0, code, aliceId, alice, Controller.pinnedTrust root (Handle.Parse "alice"))
     host.Start()
-    let accepted = host.AcceptAsync CancellationToken.None
+    let accepted = host.AcceptAsync (bounded ())
 
     use joiner =
-        (Client.connectAsync "127.0.0.1" host.Port code impostor bob Peers.acceptAny CancellationToken.None)
+        (Client.connectAsync "127.0.0.1" host.Port code impostor bob Peers.acceptAny (bounded ()))
             .GetAwaiter()
             .GetResult()
 
@@ -219,7 +242,7 @@ let ``document traffic sent before a proof is refused and changes nothing`` () =
     let key = Crypto.deriveKey code
     use host = new Host(0, code, aliceId, alice, Peers.acceptAny)
     host.Start()
-    let accepted = host.AcceptAsync CancellationToken.None
+    let accepted = host.AcceptAsync (bounded ())
 
     // A donor document, only so there is a well-formed update to inject.
     use donor = new DocumentActor()
@@ -231,9 +254,9 @@ let ``document traffic sent before a proof is refused and changes nothing`` () =
             let client = new Sockets.TcpClient()
             do! client.ConnectAsync("127.0.0.1", host.Port)
             let stream = client.GetStream()
-            do! Handshake.asJoiner stream key CancellationToken.None
+            do! Handshake.asJoiner stream key (bounded ())
             // No Hello, no Proof. Straight to the document.
-            do! Framing.writeFrame stream key Direct (Update injection) CancellationToken.None
+            do! Framing.writeFrame stream key Direct (Update injection) (bounded ())
             return client
         }
 

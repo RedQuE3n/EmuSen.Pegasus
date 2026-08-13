@@ -16,6 +16,20 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    # A CEILING, BECAUSE A SUITE THAT HANGS IS INVISIBLE. GitHub's default is
+    # 360 minutes, which for a job that finishes in about one is not a limit but
+    # an afternoon. Chariot next door learned this the expensive way: a test
+    # blocked on a socket read that could not time out, and because a hang looks
+    # exactly like a slow runner from the outside, it was read as CI being slow
+    # rather than as a defect - twice, across two releases. Chariot_Design.md §15.1.
+    #
+    # This suite drives real loopback sockets too (NetTests, RelayTests), so the
+    # same failure is available here. Ten minutes is roughly ten times what a
+    # green run needs: if this ever trips, something is wrong that no assertion
+    # caught, and the answer is to find it rather than to raise the number.
+    timeout-minutes: 10
+
     steps:
       - uses: actions/checkout@v4
 
