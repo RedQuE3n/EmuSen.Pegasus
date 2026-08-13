@@ -74,7 +74,6 @@ jobs:
                 echo "::error::A build job has not STARTED ${AGE}s after a sibling finished."
                 echo "::error::This is what a retired runner label looks like: not an error, a job nobody schedules."
                 echo "::error::Still queued: $(echo $QUEUED | tr '\n' ' ')"
-                gh run cancel "$RUN_ID" -R "$REPO" || true
                 exit 1
               fi
             else
@@ -83,3 +82,21 @@ jobs:
 
             sleep 15
           done
+
+  # Cancels only after the watchdog has already concluded, so the watchdog job
+  # is recorded as a FAILURE rather than being killed mid-flight. Whether that
+  # makes the RUN conclude as failure or cancelled is the thing this sabotage is
+  # measuring; no claim is made until it has been observed.
+  rescue:
+    needs: watchdog
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "watchdog failed; releasing the queued job"
+          gh run cancel "${{ github.run_id }}" -R "${{ github.repository }}" || true
